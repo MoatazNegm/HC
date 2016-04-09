@@ -1,11 +1,17 @@
 iscsimapping='/pace/iscsimapping'
-declare -a hosts=(`iscsiadm  -m session | awk -F'com.' '{print $2}' | awk -F':' '{print $1}'`)
-declare -a disks=(`iscsiadm -m session -P3 | grep "scsi disk" | awk -F'State' '{print $1}' | awk -F'disk ' '{print $2}' | awk '{print $1}'` )
-declare -a scsi=(`ls -l /dev/disk/by-id/ | grep scsi | grep -v part | awk -F'scsi-' '{print $2}' | awk -F'->' '{print $1}'`)
+iscsitargets='/pace/iscsitargets'
+declare -a hosts=(`cat $iscsitargets | awk '{print $2}'`);
 i=0;
 rm -r $iscsimapping 2>/dev/null
 for host in "${hosts[@]}"; do
- echo "$host" ${disks[$i]} ${scsi[$i]} >> $iscsimapping;
+ devdisk=`ls -l /dev/disk/by-path/ | grep "$host"  | grep -v part | awk -F'-> ' '{print $2}'`
+ diskid=`ls -l /dev/disk/by-id/ | grep "$devdisk" | grep scsi | grep -v part | awk -F'scsi-' '{print $2}' | awk -F' ->' '{print $1}'`
+ devformatted='/dev/s'`echo $devdisk | awk -F's' '{print $2}'`
+ if [ -z $devdisk ]; then
+  echo "$host" notconnected >> $iscsimapping;
+ else
+  echo "$host" $devformatted $diskid >> $iscsimapping;
+ fi
  i=$((i+1));
 done
 
