@@ -37,8 +37,10 @@ while read -r  hostline ; do
    devdisk=`ls -l /dev/disk/by-path/ | grep "$host" |  grep -v part | awk -F'->' '{print $2}'`;
    devformatted=`echo $devdisk | awk -F's' '{print $2}'`;
    newdiskid=`ls -l /dev/disk/by-id/ | grep "$devdisk" | grep -v part | grep scsi | awk -F'scsi-' '{print $2}' | awk -F' ->' '{print $1}'`;
-   offlinedisk=(`/sbin/zpool status | grep  OFFLINE | awk '{print $1}'`)
-   if [ $offlinedisk ]; then
+   /sbin/zpool status | grep  OFFLINE &>/dev/null
+   if [ $? -eq 0 ]; then
+    offlinedisk=(`/sbin/zpool status | grep  OFFLINE | awk '{print $1}'`)
+    echo hihihi
     replacedisk="${offlinedisk[0]}"
     for pool in "${pools[@]}"; do
      /sbin/zpool list -Hv $pool | grep "$hostdiskid" >/dev/null
@@ -61,7 +63,9 @@ while read -r  hostline ; do
      if [ $singledisk -le 2 ]; then
       runningdisk=`/sbin/zpool list -Hv | grep scsi | awk '{print $1}'`;
       dd if=/dev/zero of=/dev/disk/by-id/scsi-"$newdiskid" bs=512 count=1 >/dev/null;
+      /sbin/zpool clear $pool &>/dev/null
       sleep 1;
+      echo hihihi $pool $runningdisk $newdiskid
       /sbin/zpool attach $pool $runningdisk scsi-"$newdiskid" &>/dev/null;
       if [ $? -eq 0 ]; then 
        sed -i "/$host/d"  ${iscsimapping}new ; 
@@ -75,8 +79,9 @@ while read -r  hostline ; do
  fi
 done < $iscsimapping
 for pool in "${pools[@]}"; do
- ss=`/sbin/zpool status p1 | grep UNAVAIL | awk '{print $1}'`
- if [ -n $ss ]; then
+ /sbin/zpool status $pool | grep UNAVAIL 
+ if [ $? -eq 0 ]; then
+  ss=`/sbin/zpool status p1 | grep UNAVAIL | awk '{print $1}'`
   /sbin/zpool detach $pool $ss
  fi
 done
