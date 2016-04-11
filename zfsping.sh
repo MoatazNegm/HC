@@ -74,6 +74,12 @@ while read -r  hostline ; do
   fi
  fi
 done < $iscsimapping
+for pool in "${pools[@]}"; do
+ ss=`/sbin/zpool status p1 | grep UNAVAIL | awk '{print $1}'`
+ if [ -n $ss ]; then
+  /sbin/zpool detach $pool $ss
+ fi
+done
 if [ $dirty -eq 1 ]; then 
  cp ${iscsimapping}new $iscsimapping
 fi
