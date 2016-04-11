@@ -73,7 +73,8 @@ while read -r  hostline ; do
    fi
   fi
  fi
-done < <(cat $iscsimapping)
+done < $iscsimapping
 if [ $dirty -eq 1 ]; then 
  cp ${iscsimapping}new $iscsimapping
 fi
+sleep 2;
