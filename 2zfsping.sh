@@ -8,25 +8,27 @@ newrunninghosts=`cat $iscsimapping | grep -v notconnected`
 declare -a deadhosts=(`cat $iscsimapping | grep  notconnected`)
 newdeadhosts=`cat $iscsimapping | grep  notconnected`
 dirty=0;
-for pool in "${pools[@]}"; do
- /sbin/zpool clear p1 &>/dev/null
- /sbin/zpool status $pool | grep "was /dev" &>/dev/null
- if [ $? -eq 0 ]; then
-  faildisk=`/sbin/zpool status $pool | grep "was /dev" | awk -F'-id/' '{print $2}' | awk -F'-part' '{print $1}'`;
-  /sbin/zpool detach $pool $faildisk &>/dev/null;
- fi 
- /sbin/zpool status $pool | grep OFFLINE &>/dev/null
- if [ $? -eq 0 ]; then
-  faildisk=`/sbin/zpool status $pool | grep OFFLINE | awk '{print $1}'`;
-  /sbin/zpool detach $pool $faildisk &>/dev/null;
- fi
- /sbin/zpool status $pool | grep UNAVAIL &>/dev/null
- if [ $? -eq 0 ]; then
-  faildisk=`/sbin/zpool status $pool | grep UNAVAIL | awk '{print $1}'`;
-  /sbin/zpool detach $pool $faildisk &>/dev/null;
- fi 
-done
-
+singledisk=`/sbin/zpool list -Hv $pool | wc -l`
+if [ $singledisk -gt 2 ]; then
+ for pool in "${pools[@]}"; do
+  /sbin/zpool clear p1 &>/dev/null
+  /sbin/zpool status $pool | grep "was /dev" &>/dev/null
+  if [ $? -eq 0 ]; then
+   faildisk=`/sbin/zpool status $pool | grep "was /dev" | awk -F'-id/' '{print $2}' | awk -F'-part' '{print $1}'`;
+   /sbin/zpool detach $pool $faildisk &>/dev/null;
+  fi 
+  /sbin/zpool status $pool | grep OFFLINE &>/dev/null
+  if [ $? -eq 0 ]; then
+   faildisk=`/sbin/zpool status $pool | grep OFFLINE | awk '{print $1}'`;
+   /sbin/zpool detach $pool $faildisk &>/dev/null;
+  fi
+  /sbin/zpool status $pool | grep UNAVAIL &>/dev/null
+  if [ $? -eq 0 ]; then
+   faildisk=`/sbin/zpool status $pool | grep UNAVAIL | awk '{print $1}'`;
+   /sbin/zpool detach $pool $faildisk &>/dev/null;
+  fi 
+ done
+fi
 
 while read -r  hostline ; do
  echo $hostline | grep notconnected >/dev/null
