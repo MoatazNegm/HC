@@ -1,6 +1,7 @@
 iscsimapping='/pace/iscsimapping'
-iscsitargets='/pace/iscsitargets'
-declare -a hosts=(`cat $iscsitargets | awk '{print $2}'`);
+myhost=`hostname`;
+iscsitargets='/pace/iscsitargets';
+declare -a hosts=(`cat $iscsitargets | grep -v "$myhost" | awk '{print $2}'`);
 declare -a alldevdisk=();
 i=0;
 rm -r $iscsimapping 2>/dev/null
