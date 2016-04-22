@@ -60,12 +60,11 @@ while read -r  hostline ; do
    /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -l &>/dev/null
   sleep 2
   fi
-  
+  sed -i "/$host/d"  ${iscsimapping}new ; 
   alldevdisk=(`ls -l /dev/disk/by-path/ | grep "$host" |  grep -v part | awk -F'->' '{print $2}'`);
   for devdisk in "${alldevdisk[@]}"; do
    devformatted=`echo $devdisk | awk -F's' '{print $2}'`;
    newdiskid=`ls -l /dev/disk/by-id/ | grep "$devdisk" | grep -v part | grep scsi | awk -F'scsi-' '{print $2}' | awk -F' ->' '{print $1}'`;
-   sed -i "/$host/d"  ${iscsimapping}new ; 
    echo $host "s"$devformatted $newdiskid >> ${iscsimapping}new;
    /sbin/zpool list -vH | grep $newdiskid &>/dev/null
    if [ $? -ne 0 ]; then 
