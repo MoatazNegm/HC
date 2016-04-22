@@ -63,7 +63,6 @@ while read -r  hostline ; do
   
   alldevdisk=(`ls -l /dev/disk/by-path/ | grep "$host" |  grep -v part | awk -F'->' '{print $2}'`);
   for devdisk in "${alldevdisk[@]}"; do
-   devdisk=`ls -l /dev/disk/by-path/ | grep "$host" |  grep -v part | awk -F'->' '{print $2}'`;
    devformatted=`echo $devdisk | awk -F's' '{print $2}'`;
    newdiskid=`ls -l /dev/disk/by-id/ | grep "$devdisk" | grep -v part | grep scsi | awk -F'scsi-' '{print $2}' | awk -F' ->' '{print $1}'`;
    sed -i "/$host/d"  ${iscsimapping}new ; 
