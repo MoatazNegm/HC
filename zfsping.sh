@@ -3,6 +3,7 @@ iscsimapping='/pace/iscsimapping';
 cp ${iscsimapping} ${iscsimapping}new;
 declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 declare -a idledisk=("hi,world");
+declare -a alldevdisk=();
 runninghosts=`cat $iscsimapping | grep -v notconnected`
 newrunninghosts=`cat $iscsimapping | grep -v notconnected`
 declare -a deadhosts=(`cat $iscsimapping | grep  notconnected`)
@@ -48,11 +49,7 @@ while read -r  hostline ; do
    done;
    sed -i "/$host/d"  ${iscsimapping}new ; 
    echo $host notconnected >> ${iscsimapping}new;
-#  fi
  else
-#  host=`echo $hostline | awk '{print $1}'`
-#  ping -c 1 -W 1 $host &>/dev/null/
-#  if [ $? -eq 0 ]; then
   ls -l /dev/disk/by-path/ | grep "$host" &>/dev/null
   if [ $? -ne 0 ]; then
    hostpath=`ls /var/lib/iscsi/nodes | grep "$host"`
@@ -63,16 +60,19 @@ while read -r  hostline ; do
    /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -l &>/dev/null
   sleep 2
   fi
-  devdisk=`ls -l /dev/disk/by-path/ | grep "$host" |  grep -v part | awk -F'->' '{print $2}'`;
-  devformatted=`echo $devdisk | awk -F's' '{print $2}'`;
-  newdiskid=`ls -l /dev/disk/by-id/ | grep "$devdisk" | grep -v part | grep scsi | awk -F'scsi-' '{print $2}' | awk -F' ->' '{print $1}'`;
-  sed -i "/$host/d"  ${iscsimapping}new ; 
-  echo $host "s"$devformatted $newdiskid >> ${iscsimapping}new;
-  /sbin/zpool list -vH | grep $newdiskid &>/dev/null
-  if [ $? -ne 0 ]; then 
-   idledisk=("${idledisk[@]}" "$host,$newdiskid");
-  fi
-  echo ${idledisk[@]}
+  
+  alldevdisk=(`ls -l /dev/disk/by-path/ | grep "$host" |  grep -v part | awk -F'->' '{print $2}'`);
+  for devdisk in "${alldevdisk[@]}"; do
+   devdisk=`ls -l /dev/disk/by-path/ | grep "$host" |  grep -v part | awk -F'->' '{print $2}'`;
+   devformatted=`echo $devdisk | awk -F's' '{print $2}'`;
+   newdiskid=`ls -l /dev/disk/by-id/ | grep "$devdisk" | grep -v part | grep scsi | awk -F'scsi-' '{print $2}' | awk -F' ->' '{print $1}'`;
+   sed -i "/$host/d"  ${iscsimapping}new ; 
+   echo $host "s"$devformatted $newdiskid >> ${iscsimapping}new;
+   /sbin/zpool list -vH | grep $newdiskid &>/dev/null
+   if [ $? -ne 0 ]; then 
+    idledisk=("${idledisk[@]}" "$host,$newdiskid");
+   fi
+  done
  fi
 # fi
 done < $iscsimapping
