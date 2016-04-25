@@ -1,6 +1,5 @@
-centoszfsd3 /dev/sdf scsi-36001405eb3882fc471d4adca099643fa
-centoszfs2 notconnected
-centoszfs3 /dev/sdd scsi-3600140570816a70a09648ad80f5104d0
-centoszfs1 notconnected
+centoszfs2c notconnected
+centoszfs1c /dev/sdd scsi-360014058b86efca75ea467aacd15f582
+centoszfsd3 notconnected
 centoszfsd1 notconnected
 centosnowhere notconnected

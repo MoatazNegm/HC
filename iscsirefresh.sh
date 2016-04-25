@@ -6,13 +6,19 @@ while read -r  hostline ; do
  ping -c 1 -W 1 $host &>/dev/null
  if [ $? -eq 0 ]; then
   hostpath=`ls /var/lib/iscsi/nodes/ | grep "$host"`;
-  echo cat $iscsimapping   echo $host  grep notconnected 
+  echo cat $iscsimapping  echo $host  grep notconnected 
   cat $iscsimapping |  grep "$host" | grep notconnected &>/dev/null
   if [ $? -eq 0 ]; then
    echo here
    rm -rf /var/lib/iscsi/nodes/send_targets/$host* &>/dev/null
    hostiqn=`/sbin/iscsiadm -m discovery --portal $host --type sendtargets | awk '{print $2}'`
    /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -u
+   /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -l
+  fi
+  cat $iscsimapping | grep "$host" &>/dev/null
+  if [ $? -ne 0 ]; then
+   echo new $host
+   hostiqn=`/sbin/iscsiadm -m discovery --portal $host --type sendtargets | awk '{print $2}'`
    /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -l
   fi
  else

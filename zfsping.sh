@@ -11,12 +11,9 @@ newrunninghosts=`cat $iscsimapping | grep -v notconnected`
 declare -a deadhosts=(`cat $iscsimapping | grep  notconnected`)
 newdeadhosts=`cat $iscsimapping | grep  notconnected`
 dirty=0;
-sh iscsirefresh.sh
-sh listingtargets.sh
 for pool in "${pools[@]}"; do
  singledisk=`/sbin/zpool list -Hv $pool | wc -l`
  if [ $singledisk -gt 2 ]; then
-  /sbin/zpool clear $pool &>/dev/null
   /sbin/zpool status $pool | grep "was /dev" &>/dev/null
   if [ $? -eq 0 ]; then
    faildisk=`/sbin/zpool status $pool | grep "was /dev" | awk -F'-id/' '{print $2}' | awk -F'-part' '{print $1}'`;
@@ -49,7 +46,7 @@ while read -r  hostline ; do
    for pool in "${pools[@]}"; do
     /sbin/zpool list -Hv $pool | grep "$hostdiskid" &>/dev/null
     if [ $? -eq 0 ]; then 
-     /sbin/zpool offline $pool scsi-"$hostdiskid" &>/dev/null;
+     /sbin/zpool offline $pool "$hostdiskid" &>/dev/null;
     fi
    done;
   fi
@@ -57,7 +54,6 @@ while read -r  hostline ; do
 done < ${iscsimapping}
 needlist=1;
 for pool in "${pools[@]}"; do
-  /sbin/zpool clear $pool &>/dev/null
  runningdisk=`/sbin/zpool list -Hv $pool | grep -v "$pool" | grep -v mirror | awk '{print $1}'`
  single=`/sbin/zpool list -Hv $pool | grep -v "$pool" | grep -v mirror | wc -l`
  echo single count=$single
@@ -65,7 +61,7 @@ for pool in "${pools[@]}"; do
   if [ "$needlist" -eq 1 ] ; then 
    echo here1
    needlist=2;
-   expopool=`/sbin/zpool import`
+   expopool=`/sbin/zpool import 2>/dev/null`
    while read -r  hostline ; do
     diskid=`echo $hostline | awk '{print $3}'`
     host=`echo $hostline | awk '{print $1}'`
