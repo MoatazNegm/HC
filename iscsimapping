@@ -1,2 +1,6 @@
-centoszfs2 /dev/sdd 360014055ce2d93afd8046f4919b76a3f
-centoszfs3 /dev/sde 3600140570816a70a09648ad80f5104d0
+centoszfsd3 /dev/sdf scsi-36001405eb3882fc471d4adca099643fa
+centoszfs2 notconnected
+centoszfs3 /dev/sdd scsi-3600140570816a70a09648ad80f5104d0
+centoszfs1 notconnected
+centoszfsd1 notconnected
+centosnowhere notconnected

@@ -4,7 +4,7 @@ myhost=`hostname`
 exporpool=`/sbin/zpool import`
 declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 declare -a idledisk=("hi,world");
-declare -a hostdisk=("hi,world");
+declare -a hostdisk=();
 
 while read -r  hostline ; do
  host=`echo $hostline | awk '{print $1}'`;
@@ -20,7 +20,7 @@ while read -r  hostline ; do
     echo $exporpool | grep "$newdiskid" &>/dev/null
     if [ $? -ne 0 ]; then
      echo $host | grep $myhost &>/dev/null
-     if [$? -eq 0 ]; then
+     if [ $? -eq 0 ]; then
       hostdisk=("${hostdisk[@]}" "$host,$newdiskid");
      else
       idledisk=("${idledisk[@]}" "$host,$newdiskid");

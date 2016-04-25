@@ -1,15 +1,24 @@
 cd /pace
 iscsimapping='/pace/iscsimapping';
+iscsitargets='/pace/iscsitargets';
 while read -r  hostline ; do
- echo $hostline | grep notconnected >/dev/null
- host=`echo $hostline | awk '{print $1}'`
+ host=`echo $hostline | awk '{print $2}'`
  ping -c 1 -W 1 $host &>/dev/null
  if [ $? -eq 0 ]; then
-  hostpath=`ls /var/lib/iscsi/nodes | grep "$host"`;
-  rm -rf /var/lib/iscsi/nodes/$hostpath &>/dev/null
-  hostiqn=`/sbin/iscsiadm -m discovery --portal $host --type sendtargets | awk '{print $2}'`
-  /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -u
-  /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -l
+  hostpath=`ls /var/lib/iscsi/nodes/ | grep "$host"`;
+  echo cat $iscsimapping   echo $host  grep notconnected 
+  cat $iscsimapping |  grep "$host" | grep notconnected &>/dev/null
+  if [ $? -eq 0 ]; then
+   echo here
+   rm -rf /var/lib/iscsi/nodes/send_targets/$host* &>/dev/null
+   hostiqn=`/sbin/iscsiadm -m discovery --portal $host --type sendtargets | awk '{print $2}'`
+   /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -u
+   /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -l
+  fi
+ else
+  echo deleteing $host
+  rm -rf /var/lib/iscsi/nodes/iqn.2016-03.com.${host}:t1 
+  rm -rf /var/lib/iscsi/nodes/${host}* &>/dev/null
  fi
-done < $iscsimapping
+done < $iscsitargets
 sleep 2;
