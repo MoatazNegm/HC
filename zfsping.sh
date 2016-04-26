@@ -6,6 +6,8 @@ declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 declare -a idledisk=();
 declare -a hostdisk=();
 declare -a alldevdisk=();
+sh iscsirefresh.sh  &>/dev/null &
+sh listingtargets.sh
 runninghosts=`cat $iscsimapping | grep -v notconnected`
 newrunninghosts=`cat $iscsimapping | grep -v notconnected`
 declare -a deadhosts=(`cat $iscsimapping | grep  notconnected`)
@@ -38,16 +40,18 @@ done
 
 while read -r  hostline ; do
  host=`echo $hostline | awk '{print $1}'`
- echo $host | grep "notconnected" &>/dev/null
+ echo $hostline | grep "notconnected" &>/dev/null
  if [ $? -eq 0 ]; then
-  cat ${iscsimapping}new | grep $host | grep "notconnected"
+  cat ${iscsimapping}new | grep -w "$host" | grep "notconnected"
   if [ $? -ne 0 ]; then 
-   hostdiskid=`echo $hostline | awk '{print $3}'`
-   for pool in "${pools[@]}"; do
-    /sbin/zpool list -Hv $pool | grep "$hostdiskid" &>/dev/null
-    if [ $? -eq 0 ]; then 
-     /sbin/zpool offline $pool "$hostdiskid" &>/dev/null;
-    fi
+   declare -a hostdiskids=(`cat ${iscsimapping}new | grep -w "$host" | awk '{print $3}'`);
+   for hostdiskid in "${hostdiskids[@]}"; do
+    for pool2 in "${pools[@]}"; do
+     /sbin/zpool list -Hv $pool2 | grep "$hostdiskid" &>/dev/null
+     if [ $? -eq 0 ]; then 
+      /sbin/zpool offline $pool2 "$hostdiskid" &>/dev/null;
+     fi
+    done
    done;
   fi
  fi

@@ -6,13 +6,13 @@ declare -a alldevdisk=();
 i=0;
 rm -r $iscsimapping 2>/dev/null
 for host in "${hosts[@]}"; do
- ls /var/lib/iscsi/nodes/  | grep "$host" &>/dev/null
+ ls /var/lib/iscsi/nodes/  | grep -w "$host" &>/dev/null
  if [ $? -ne 0 ] ; then
   echo "$host" notconnected >> $iscsimapping;
  else
-  alldevdisk=(`ls -l /dev/disk/by-path/ | grep "$host"  | grep -v part | grep -v wwn | awk '{print $11}'`)
+  alldevdisk=(`ls -l /dev/disk/by-path/ | grep -w "$host"  | grep -v part | grep -v wwn | awk '{print $11}'`)
   for devdisk in "${alldevdisk[@]}"; do
-   diskid=`ls -l /dev/disk/by-id/ | grep "$devdisk" | grep -v wwn | grep -v part | awk '{print $9}'`
+   diskid=`ls -l /dev/disk/by-id/ | grep -w "$devdisk" | grep -v wwn | grep -v part | awk '{print $9}'`
    devformatted='/dev/'`echo $devdisk | awk -F'/' '{print $3}'`
    if [ -z $diskid ]; then
     echo "$host" notconnected >> $iscsimapping;
