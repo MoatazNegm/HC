@@ -1,4 +1,4 @@
-centoszfs2c /dev/sde scsi-36001405aa69961983c54359a2545184b
+centoszfs2c /dev/sdd scsi-36001405aa69961983c54359a2545184b
 centoszfs1c /dev/sdc scsi-360014058b86efca75ea467aacd15f582
 centoszfsd3 notconnected
 centoszfsd1 notconnected
