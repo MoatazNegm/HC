@@ -1,11 +1,15 @@
 cd /pace
-iscsimapping='/pace/iscsimapping';
+iscsimapping='/pacedata/iscsimapping';
+runningpools='/pacedata/runningpools';
 myhost=`hostname`
+poollist='/pacedata/'${myhost}'poollist';
+allpools=`cat /pacedata/$(ls /pacedata/ | grep poollist)`
 cp ${iscsimapping} ${iscsimapping}new;
 declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 declare -a idledisk=();
 declare -a hostdisk=();
 declare -a alldevdisk=();
+attached=0;
 sh iscsirefresh.sh  &>/dev/null &
 sh listingtargets.sh
 runninghosts=`cat $iscsimapping | grep -v notconnected`
@@ -16,6 +20,7 @@ dirty=0;
 for pool in "${pools[@]}"; do
  singledisk=`/sbin/zpool list -Hv $pool | wc -l`
  if [ $singledisk -gt 2 ]; then
+  attached=1;
   /sbin/zpool status $pool | grep "was /dev" &>/dev/null
   if [ $? -eq 0 ]; then
    faildisk=`/sbin/zpool status $pool | grep "was /dev" | awk -F'-id/' '{print $2}' | awk -F'-part' '{print $1}'`;
@@ -42,8 +47,10 @@ while read -r  hostline ; do
  host=`echo $hostline | awk '{print $1}'`
  echo $hostline | grep "notconnected" &>/dev/null
  if [ $? -eq 0 ]; then
+  echo $host not connected
   cat ${iscsimapping}new | grep -w "$host" | grep "notconnected"
   if [ $? -ne 0 ]; then 
+   echo disconnecting $host disks
    declare -a hostdiskids=(`cat ${iscsimapping}new | grep -w "$host" | awk '{print $3}'`);
    for hostdiskid in "${hostdiskids[@]}"; do
     for pool2 in "${pools[@]}"; do
@@ -72,27 +79,23 @@ for pool in "${pools[@]}"; do
     echo host,diskid= $host, $diskid
     echo $hostline | grep "notconnected" &>/dev/null
     if [ $? -ne 0 ]; then
-    echo here1_2
-     echo $expopool | grep "$diskid" &>/dev/null
+     echo here1_2
+     echo $allpools | grep "$diskid" &>/dev/null
      if [ $? -ne 0 ]; then
-      echo not in import
-      /sbin/zpool list -Hv | grep "$diskid" &>/dev/null
-      if [ $? -ne 0 ]; then 
-       echo here idles
-       echo $myhost | grep "$host" &>/dev/null
-       if [ $? -eq 0 ]; then
-           echo local disk
-        hostdisk=("${hostdisk[@]}" "$host,$diskid");
-        echo hostdisk=${hostdisk[@]};
-       else
-         echo foreign disk
-        idledisk=("${idledisk[@]}" "$host,$diskid");
-        echo idledisk=${idledisk[@]};
-       fi
+      echo not in a runningpool 
+      echo $myhost | grep "$host" &>/dev/null
+      if [ $? -eq 0 ]; then
+          echo local disk
+       hostdisk=("${hostdisk[@]}" "$host,$diskid");
+       echo hostdisk=${hostdisk[@]};
+      else
+        echo foreign disk
+       idledisk=("${idledisk[@]}" "$host,$diskid");
+       echo idledisk=${idledisk[@]};
+      fi
       echo idledisk=${idledisk[@]}
       echo hostdisk=${hostdisk[@]}
-      fi
-     fi 
+     fi
     fi
    done < $iscsimapping
   fi
@@ -110,6 +113,7 @@ for pool in "${pools[@]}"; do
     zpool labelclear /dev/disk/by-id/$newdisk
     /sbin/zpool attach -f $pool $runningdisk $newdisk ;
     if [ $? -eq 0 ]; then 
+     attached=1;
      unset idledisk[$i];
     fi
    fi
@@ -123,9 +127,22 @@ for pool in "${pools[@]}"; do
     /sbin/zpool attach -f $pool $runningdisk $newdisk ;
     echo /sbin/zpool attach -f $pool $runningdisk $newdisk ;
     if [ $? -eq 0 ]; then 
+     attached=1;
      unset hostdisk[$i];
     fi
    fi
   fi
  fi 
 done
+if [ $attached -eq 1 ]; then
+ /sbin/zpool list -Hv > $poollist 
+ 
+ while read -r  hostline ; do
+  host=`echo $hostline | awk '{print $1}'`
+  echo $hostline | grep "notconnected" &>/dev/null
+  if [ $? -ne 0 ]; then
+   scp $poollist $host:$poollist;
+  fi
+ done < ${iscsimapping}
+fi
+

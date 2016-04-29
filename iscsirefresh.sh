@@ -1,6 +1,6 @@
 cd /pace
-iscsimapping='/pace/iscsimapping';
-iscsitargets='/pace/iscsitargets';
+iscsimapping='/pacedata/iscsimapping';
+iscsitargets='/pacedata/iscsitargets';
 while read -r  hostline ; do
  host=`echo $hostline | awk '{print $2}'`
  ping -c 1 -W 1 $host &>/dev/null
