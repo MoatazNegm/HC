@@ -11,14 +11,8 @@ declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 declare -a idledisk=();
 declare -a hostdisk=();
 declare -a alldevdisk=();
-attached=0;
 sh iscsirefresh.sh  &>/dev/null &
 sh listingtargets.sh
-runninghosts=`cat $iscsimapping | grep -v notconnected`
-newrunninghosts=`cat $iscsimapping | grep -v notconnected`
-declare -a deadhosts=(`cat $iscsimapping | grep  notconnected`)
-newdeadhosts=`cat $iscsimapping | grep  notconnected`
-dirty=0;
 for pool in "${pools[@]}"; do
  singledisk=`/sbin/zpool list -Hv $pool | wc -l`
  if [ $singledisk -gt 3 ]; then
