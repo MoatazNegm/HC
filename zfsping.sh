@@ -13,6 +13,7 @@ declare -a hostdisk=();
 declare -a alldevdisk=();
 sh iscsirefresh.sh  &>/dev/null &
 sh listingtargets.sh
+sleep 1
 for pool in "${pools[@]}"; do
  singledisk=`/sbin/zpool list -Hv $pool | wc -l`
  if [ $singledisk -gt 3 ]; then
@@ -46,7 +47,14 @@ while read -r  hostline ; do
  host=`echo $hostline | awk '{print $1}'`
  echo $hostline | grep "notconnected" &>/dev/null
  if [ $? -eq 0 ]; then
-  echo $host not connected
+  hostdiskid=`echo $host | awk '{print $3}'`
+  for pool2 in "${pools[@]}"; do
+   /sbin/zpool list -Hv $pool2 | grep "$hostdiskid" &>/dev/null
+   if [ $? -eq 0 ]; then 
+    /sbin/zpool offline $pool2 "$hostdiskid" &>/dev/null;
+    /sbin/zpool set cachefile=/pacedata/pools/${pool2}.cache $pool2;
+   fi
+  done
   cat ${iscsimapping}new | grep -w "$host" | grep "notconnected"
   if [ $? -ne 0 ]; then 
    echo disconnecting $host disks
@@ -63,6 +71,7 @@ while read -r  hostline ; do
   fi
  fi
 done < ${iscsimapping}
+ 
 needlist=1;
 for pool in "${pools[@]}"; do
  runningdisk=`/sbin/zpool list -Hv $pool | grep -v "$pool" | grep -v mirror | awk '{print $1}'`

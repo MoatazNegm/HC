@@ -23,3 +23,4 @@ done;
 for target in "${iscsitargets[@]}"; do
  targetcli iscsi/iqn.2016-03.com.${myhost}:t1/tpg1/acls/ create iqn.1994-05.com.redhat:$target
 done
+targetcli saveconfig
