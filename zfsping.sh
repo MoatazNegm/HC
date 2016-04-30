@@ -4,7 +4,7 @@ runningpools='/pacedata/runningpools';
 myhost=`hostname`
 poollist='/pacedata/pools/'${myhost}'poollist';
 cd /pacedata/pools/
-allpools=`cat /pacedata/pools/$(ls /pacedata/ | grep poollist)`
+allpools=`cat /pacedata/pools/$(ls /pacedata/pools/ | grep poollist)`
 cd /pace
 cp ${iscsimapping} ${iscsimapping}new;
 declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)

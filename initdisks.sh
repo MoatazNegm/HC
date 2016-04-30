@@ -1,5 +1,5 @@
 cd /pace
-iscsimapping='/pace/iscsimapping';
+iscsimapping='/pacedata/iscsimapping';
 myhost=`hostname`
 exporpool=`/sbin/zpool import`
 declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
