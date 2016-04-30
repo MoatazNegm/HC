@@ -2,8 +2,10 @@ cd /pace
 iscsimapping='/pacedata/iscsimapping';
 runningpools='/pacedata/runningpools';
 myhost=`hostname`
-poollist='/pacedata/'${myhost}'poollist';
-allpools=`cat /pacedata/$(ls /pacedata/ | grep poollist)`
+poollist='/pacedata/pools/'${myhost}'poollist';
+cd /pacedata/pools/
+allpools=`cat /pacedata/pools/$(ls /pacedata/ | grep poollist)`
+cd /pace
 cp ${iscsimapping} ${iscsimapping}new;
 declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 declare -a idledisk=();
@@ -19,30 +21,33 @@ newdeadhosts=`cat $iscsimapping | grep  notconnected`
 dirty=0;
 for pool in "${pools[@]}"; do
  singledisk=`/sbin/zpool list -Hv $pool | wc -l`
- if [ $singledisk -gt 2 ]; then
-  attached=1;
+ if [ $singledisk -gt 3 ]; then
   /sbin/zpool status $pool | grep "was /dev" &>/dev/null
   if [ $? -eq 0 ]; then
    faildisk=`/sbin/zpool status $pool | grep "was /dev" | awk -F'-id/' '{print $2}' | awk -F'-part' '{print $1}'`;
    /sbin/zpool detach $pool $faildisk &>/dev/null;
+   /sbin/zpool set cachefile=/pacedata/pools/${pool}.cache $pool;
   fi 
+  /sbin/zpool status $pool | grep "was /dev/s" ;
   if [ $? -eq 0 ]; then
    faildisk=`/sbin/zpool status $pool | grep "was /dev/s" | awk -F'was ' '{print $2}'`;
    /sbin/zpool detach $pool $faildisk &>/dev/null;
+   /sbin/zpool set cachefile=/pacedata/pools/${pool}.cache $pool ;
   fi 
   /sbin/zpool status $pool | grep OFFLINE &>/dev/null
   if [ $? -eq 0 ]; then
    faildisk=`/sbin/zpool status $pool | grep OFFLINE | awk '{print $1}'`;
    /sbin/zpool detach $pool $faildisk &>/dev/null;
+   /sbin/zpool set cachefile=/pacedata/pools/${pool}.cache $pool;
   fi
   /sbin/zpool status $pool | grep UNAVAIL &>/dev/null
   if [ $? -eq 0 ]; then
    faildisk=`/sbin/zpool status $pool | grep UNAVAIL | awk '{print $1}'`;
    /sbin/zpool detach $pool $faildisk &>/dev/null;
+   /sbin/zpool set cachefile=/pacedata/pools/${pool}.cache $pool;
   fi 
  fi
 done
-
 while read -r  hostline ; do
  host=`echo $hostline | awk '{print $1}'`
  echo $hostline | grep "notconnected" &>/dev/null
@@ -57,6 +62,7 @@ while read -r  hostline ; do
      /sbin/zpool list -Hv $pool2 | grep "$hostdiskid" &>/dev/null
      if [ $? -eq 0 ]; then 
       /sbin/zpool offline $pool2 "$hostdiskid" &>/dev/null;
+      /sbin/zpool set cachefile=/pacedata/pools/${pool2}.cache $pool2;
      fi
     done
    done;
@@ -113,7 +119,7 @@ for pool in "${pools[@]}"; do
     zpool labelclear /dev/disk/by-id/$newdisk
     /sbin/zpool attach -f $pool $runningdisk $newdisk ;
     if [ $? -eq 0 ]; then 
-     attached=1;
+     /sbin/zpool set cachefile=/pacedata/pools/${pool}.cache $pool;
      unset idledisk[$i];
     fi
    fi
@@ -127,21 +133,25 @@ for pool in "${pools[@]}"; do
     /sbin/zpool attach -f $pool $runningdisk $newdisk ;
     echo /sbin/zpool attach -f $pool $runningdisk $newdisk ;
     if [ $? -eq 0 ]; then 
-     attached=1;
+     /sbin/zpool set cachefile=/pacedata/pools/${pool}.cache $pool ;
      unset hostdisk[$i];
     fi
    fi
   fi
  fi 
 done
-if [ $attached -eq 1 ]; then
- /sbin/zpool list -Hv > $poollist 
- 
+/sbin/zpool list -Hv | awk '{print $1}' > ${poollist}local
+diff ${poollist} ${poollist}local  &>/dev/null
+if [ $? -ne 0 ]; then 
+ cp ${poollist}local $poollist
  while read -r  hostline ; do
   host=`echo $hostline | awk '{print $1}'`
-  echo $hostline | grep "notconnected" &>/dev/null
+  echo $hostline | grep "notconnected"  &>/dev/null
   if [ $? -ne 0 ]; then
-   scp $poollist $host:$poollist;
+   echo $hostline | grep "$myhost" &>/dev/null
+   if [ $? -ne 0 ]; then
+    scp -r -o ConnectTimeout=5 /pacedata/pools $host:/pacedata;
+   fi
   fi
  done < ${iscsimapping}
 fi
