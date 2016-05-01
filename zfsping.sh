@@ -1,4 +1,5 @@
 cd /pace
+touch /tmp/zfsping
 iscsimapping='/pacedata/iscsimapping';
 runningpools='/pacedata/runningpools';
 myhost=`hostname`
