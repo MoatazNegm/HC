@@ -25,7 +25,7 @@ for host in "${hosts[@]}"; do
    done < ${iscsimapping}old
   fi
   cd /pacedata/pools/
-  rm -rf $( ls /pacedata/pools/ | grep "$host") &>/dev/null
+  rm -rf $( ls /pacedata/pools/* | grep "$host") &>/dev/null
   cd /pace
  else
   alldevdisk=(`ls -l /dev/disk/by-path/ | grep  "$host"  | grep -v part | grep -v wwn | awk '{print $11}'`)
@@ -35,7 +35,7 @@ for host in "${hosts[@]}"; do
    if [ -z $diskid ]; then
     echo "$host" null null notconnected >> $iscsimapping;
     cd /pacedata/pools/
-    rm -rf $( ls /pacedata/pools/ | grep "$host") &>/dev/null
+    rm -rf $( ls /pacedata/pools/* | grep "$host") &>/dev/null
     cd /pace
    else
     echo "$host" $devformatted $diskid >> $iscsimapping;
