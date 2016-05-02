@@ -30,7 +30,8 @@ while read -r  hostline ; do
   rm -rf /var/lib/iscsi/nodes/${host}* &>/dev/null
  fi
 done < $iscsitargets
-if [ $needrescan -eq 1]; then
+if [ $needrescan -eq 1 ]; then
 # /sbin/iscsiadm -m session --rescan &>/dev/null
+ sleep 1; 
 fi
 sleep 2;
