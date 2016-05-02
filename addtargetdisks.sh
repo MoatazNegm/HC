@@ -2,12 +2,16 @@ cd /pace
 myhost=`hostname`;
 declare -a iscsitargets=(`cat iscsitargets | awk '{print $2}' `);
 declare -a disks=(`lsblk -nS | grep -v sr0 | grep -v sda | grep -v LIO | awk '{print $1}'`)
+mappedhosts=`targetcli ls /iscsi | grep Mapped`;
 targets=`targetcli ls backstores/block | grep dev | awk -F'[' '{print $2}' | awk '{print $1}'`
 declare -a newdisks=();
-targetcli iscsi/ create iqn.2016-03.com.${myhost}:t1 &>/dev/null
+targetcli ls iscsi/ | grep ".$myhost:t1" &>/dev/null
+if [ $? -ne 0 ]; then
+ targetcli iscsi/ create iqn.2016-03.com.${myhost}:t1 &>/dev/null
+fi
 i=0;
 for devdisk in "${disks[@]}"; do
- echo $targets | grep $devdisk
+ echo $targets | grep $devdisk &>/dev/null
  if [ $? -ne 0 ]; then
   newdisks[$i]=$devdisk
   i=$((i+1)) 
@@ -21,6 +25,9 @@ for devdisk in "${newdisks[@]}"; do
 done;
 
 for target in "${iscsitargets[@]}"; do
- targetcli iscsi/iqn.2016-03.com.${myhost}:t1/tpg1/acls/ create iqn.1994-05.com.redhat:$target
+ echo $mappedhosts | grep $target &>/dev/null
+ if [ $? -ne 0 ]; then
+  targetcli iscsi/iqn.2016-03.com.${myhost}:t1/tpg1/acls/ create iqn.1994-05.com.redhat:$target
+ fi
 done
 targetcli saveconfig
