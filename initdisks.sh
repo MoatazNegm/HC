@@ -1,19 +1,21 @@
 cd /pace
 iscsimapping='/pacedata/iscsimapping';
 myhost=`hostname`
-exporpool=`/sbin/zpool import`
-declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 runningpools='/pacedata/pools/runningpools';
-/sbin/zpool list -Hv  > $runningpools
 declare -a idledisk=();
 declare -a hostdisk=();
-while read -r hostline; do
- echo $hostline | grep notconnected  &>/dev/null;
+declare -a runninghosts=(`cat $iscsimapping | grep -v notconnected | awk '{print $1}'`);
+phost='';
+for host in "${runninghosts[@]}" ; do
+ echo $phost | grep $host
  if [ $? -ne 0 ]; then
-  host=`echo $hostline | awk '{print $1}'`;
-  ssh $host /sbin/zpool list -Hv | ( cat >> $runningpools);
+  phost=${phost}' '${host};
+  hostp=`ssh $host /sbin/zpool list -Hv ` 
+  hostps=${hostps}' '${hostp};
  fi
-done < $iscsimapping
+done
+echo $hostps >> $runningpools
+sleep 2
 while read -r  hostline ; do
  host=`echo $hostline | awk '{print $1}'`;
  ls -l /dev/disk/by-path/ | grep "$host" &>/dev/null;
