@@ -15,6 +15,7 @@ declare -a alldevdisk=();
 sh iscsirefresh.sh  &>/dev/null &
 sh listingtargets.sh
 sleep 1
+runninghosts=`cat $iscsimapping | grep -v notconnected | awk '{print $1}'`
 for pool in "${pools[@]}"; do
  singledisk=`/sbin/zpool list -Hv $pool | wc -l`
  if [ $singledisk -gt 3 ]; then
@@ -105,6 +106,11 @@ for pool in "${pools[@]}"; do
       fi
       echo idledisk=${idledisk[@]}
       echo hostdisk=${hostdisk[@]}
+     fi
+    else
+     echo $runninghosts | grep $host &>/dev/null
+     if [ $? -eq 0 ]; then
+       /sbin/iscsiadm -m session --rescan &>/dev/null
      fi
     fi
    done < $iscsimapping
