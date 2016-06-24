@@ -1,6 +1,6 @@
 cd /pace
 iscsimapping='/pacedata/iscsimapping';
-iscsitargets='/pacedata/iscsitargets';
+iscsitargets='/pace/iscsitargets';
 systemctl stop iscsi
 while read -r  hostline ; do
  host=`echo $hostline | awk '{print $2}'`

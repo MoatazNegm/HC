@@ -1,6 +1,6 @@
 iscsimapping='/pacedata/iscsimapping'
 myhost=`hostname`;
-iscsitargets='/pacedata/iscsitargets';
+iscsitargets='/pace/iscsitargets';
 declare -a hosts=(`cat $iscsitargets |  awk '{print $2}'`);
 declare -a alldevdisk=();
 declare -a hostline=();
@@ -25,7 +25,7 @@ for host in "${hosts[@]}"; do
    done < ${iscsimapping}old
   fi
   cd /pacedata/pools/
-  rm -rf $( ls /pacedata/pools/* | grep "$host") &>/dev/null
+  rm -rf $( ls /pacedata/pools/ | grep "$host") &>/dev/null
   cd /pace
  else
   alldevdisk=(`ls -l /dev/disk/by-path/ | grep  "$host"  | grep -v part | grep -v wwn | awk '{print $11}'`)

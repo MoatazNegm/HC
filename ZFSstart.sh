@@ -12,13 +12,16 @@ rm -rf ${runningpools}$myhost &>/dev/null
 declare -a pools=();
 /sbin/zpool export -a
 #sh iscsienable.sh
-sh iscsirefresh.sh 
+/pace/addtargetdisks.sh 
+/pace/iscsienable.sh
+/pace/iscsirefresh.sh 
 sleep 1;
 sh listingtargets.sh
-sleep 1
-sh addtargetdisks.sh 
+ohosts=`cat $iscsimapping | grep -v notconnected | wc -l `
+if [ $ohosts -eq 1 ]; then
+ /sbin/zpool import -a
+fi
 #sh init
-sleep 1;
 #sh initdisks.sh
 cat $iscsimapping | grep notconnected &>/dev/null
 if [ $? -eq 0 ]; then
