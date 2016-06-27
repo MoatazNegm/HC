@@ -16,6 +16,10 @@ declare -a alldevdisk=();
 sh iscsirefresh.sh  &>/dev/null &
 sh listingtargets.sh
 sleep 1
+counthosts=`cat $iscsimapping | grep -v notconnected | wc -l`
+if [ $counthosts -eq 1 ]; then 
+ zpool import -a ;
+fi
 runninghosts=`cat $iscsimapping | grep -v notconnected | awk '{print $1}'`
 for pool in "${pools[@]}"; do
  singledisk=`/sbin/zpool list -Hv $pool | wc -l`
