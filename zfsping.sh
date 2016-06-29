@@ -8,6 +8,7 @@ cachestate=0;
 cd /pacedata/pools/
 allpools=`cat /pacedata/pools/$(ls /pacedata/pools/ | grep poollist)`
 cd /pace
+./ZFSmonitor.sh
 cp ${iscsimapping} ${iscsimapping}new;
 declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 declare -a idledisk=();
