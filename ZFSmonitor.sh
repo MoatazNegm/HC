@@ -2,11 +2,14 @@ cd /pace
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 iscsimapping='/pacedata/iscsimapping'
 runningpools='/pacedata/pools/runningpools';
+vhost='/TopStordata/hostname';
 myhost=`hostname`
 echo runningpools > ${runningpools}
 /sbin/zpool list -H > ${runningpools}$myhost
+hostnam=`cat $vhost`
 while read -r runpool; do
- echo $myhost $runpool >> $runningpools
+ echo $myhost $runpool $hostnam >> $runningpools
+ echo $myhost $runpool $hostnam 
 done < ${runningpools}$myhost
 rm -rf ${runningpools}$myhost &>/dev/null
 declare -a pools=();
@@ -29,8 +32,10 @@ if [ $? -eq 0 ]; then
    if [ $? -ne 0 ]; then
     host=`echo $hostline | awk '{print $1}'`;
      ssh $host /sbin/zpool list -H | (cat >> ${runningpools}$host)
+     ssh $host cat $vhost | (cat >> ${runningpools}${host}name)
+     hostnam=`cat ${runningpools}${host}name`;
      while read -r runpool; do
-      echo $host $runpool >> $runningpools
+      echo $host $runpool  $hostnam >> $runningpools
      done < ${runningpools}$host
       rm -rf ${runningpools}$host &>/dev/null
    fi
