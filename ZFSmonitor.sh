@@ -1,3 +1,4 @@
+#!/usr/local/bin/zsh
 cd /pace 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 iscsimapping='/pacedata/iscsimapping'
@@ -12,15 +13,7 @@ while read -r runpool; do
  echo $myhost $runpool $hostnam 
 done < ${runningpools}$myhost
 rm -rf ${runningpools}$myhost &>/dev/null
-declare -a pools=();
-#sh iscsienable.sh
-#sh iscsirefresh.sh 
-iscsiadm -m session --rescan
-sleep 1;
-sh listingtargets.sh;
-#sh addtargetdisks.sh 
-#sh init
-#sh initdisks.sh
+pools=();
 cat $iscsimapping | grep notconnected &>/dev/null
 if [ $? -eq 0 ]; then
  echo searching pools
@@ -63,4 +56,3 @@ if [ $? -eq 0 ]; then
   done
  fi
 fi
-sh addtargetdisks.sh 
