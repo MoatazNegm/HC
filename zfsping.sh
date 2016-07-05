@@ -14,6 +14,7 @@ pools=(`/sbin/zpool list -H | awk '{print $1}'`)
 idledisk=();
 hostdisk=();
 alldevdisk=();
+/pace/iscsirefresh.sh
 counthosts=`cat $iscsimapping | grep -v notconnected | wc -l`
 if [ $counthosts -eq 1 ]; then 
  zpool import -a ;
