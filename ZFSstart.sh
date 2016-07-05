@@ -16,7 +16,7 @@ sh iscsirefresh.sh
 sleep 1;
 sh listingtargets.sh
 sleep 1
-sh addtargetdisks.sh 
+#sh addtargetdisks.sh 
 #sh init
 sleep 1;
 #sh initdisks.sh

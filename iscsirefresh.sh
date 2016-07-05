@@ -1,8 +1,9 @@
 cd /pace
 iscsimapping='/pacedata/iscsimapping';
-iscsitargets='/pace/iscsitargets';
+iscsitargets='/pacedata/iscsitargets';
 #/sbin/iscsiadm -m session --rescan &>/dev/null
 needrescan=0;
+./listingtargets.sh
 while read -r  hostline ; do
  host=`echo $hostline | awk '{print $2}'`
  ping -c 1 -W 1 $host &>/dev/null
@@ -15,8 +16,9 @@ while read -r  hostline ; do
    echo here
    rm -rf /var/lib/iscsi/nodes/send_targets/$host* &>/dev/null
    hostiqn=`/sbin/iscsiadm -m discovery --portal $host --type sendtargets | awk '{print $2}'`
-   /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -u
+#   /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -u
    /sbin/iscsiadm -m node --targetname $hostiqn --portal $host -l
+   /sbin/iscsiadm -m session --rescan &>/dev/null
   fi
   cat $iscsimapping | grep "$host" &>/dev/null
   if [ $? -ne 0 ]; then
@@ -34,4 +36,4 @@ if [ $needrescan -eq 1 ]; then
 # /sbin/iscsiadm -m session --rescan &>/dev/null
  sleep 1; 
 fi
-sleep 2;
+./listingtargets.sh

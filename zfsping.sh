@@ -1,3 +1,4 @@
+#!/usr/local/bin/zsh
 cd /pace
 touch /tmp/zfsping
 iscsimapping='/pacedata/iscsimapping';
@@ -8,15 +9,11 @@ cachestate=0;
 cd /pacedata/pools/
 allpools=`cat /pacedata/pools/$(ls /pacedata/pools/ | grep poollist)`
 cd /pace
-./ZFSmonitor.sh
 cp ${iscsimapping} ${iscsimapping}new;
-declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
-declare -a idledisk=();
-declare -a hostdisk=();
-declare -a alldevdisk=();
-sh iscsirefresh.sh  &>/dev/null &
-sh listingtargets.sh
-sleep 1
+pools=(`/sbin/zpool list -H | awk '{print $1}'`)
+idledisk=();
+hostdisk=();
+alldevdisk=();
 counthosts=`cat $iscsimapping | grep -v notconnected | wc -l`
 if [ $counthosts -eq 1 ]; then 
  zpool import -a ;

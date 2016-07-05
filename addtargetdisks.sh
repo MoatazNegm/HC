@@ -1,6 +1,6 @@
 cd /pace
 myhost=`hostname`;
-declare -a iscsitargets=(`cat iscsitargets | awk '{print $2}' `);
+declare -a iscsitargets=(`cat /pacedata/iscsitargets | awk '{print $2}' `);
 declare -a disks=(`echo sda5`)
 mappedhosts=`targetcli ls /iscsi | grep Mapped`;
 targets=`targetcli ls backstores/block | grep dev | awk -F'[' '{print $2}' | awk '{print $1}'`

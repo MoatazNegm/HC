@@ -44,6 +44,7 @@ for localdisk in "${hostdisk[@]}"; do
    rm -rf /p${nextpool} &>/dev/null
    /sbin/zpool create -f p${nextpool} ${disk2} ;
    echo /sbin/zpool create p${nextpool} /dev/disk/by-id/scsi-${disk2} ;
+   /sbin/zfs set sync=disabled p${nextpool}
  else
   x=$((${#idledisk[@]}-1));
   if [ $x -ge 0 ]; then

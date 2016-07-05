@@ -18,7 +18,7 @@ declare -a pools=();
 iscsiadm -m session --rescan
 sleep 1;
 sh listingtargets.sh;
-sh addtargetdisks.sh 
+#sh addtargetdisks.sh 
 #sh init
 #sh initdisks.sh
 cat $iscsimapping | grep notconnected &>/dev/null
@@ -63,3 +63,4 @@ if [ $? -eq 0 ]; then
   done
  fi
 fi
+sh addtargetdisks.sh 

@@ -1,6 +1,6 @@
 iscsimapping='/pacedata/iscsimapping'
 myhost=`hostname`;
-iscsitargets='/pace/iscsitargets';
+iscsitargets='/pacedata/iscsitargets';
 declare -a hosts=(`cat $iscsitargets |  awk '{print $2}'`);
 declare -a alldevdisk=();
 declare -a hostline=();
