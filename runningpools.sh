@@ -1,0 +1,2 @@
+cd /pacedata/
+echo $@ >> runningpools
