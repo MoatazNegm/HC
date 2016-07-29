@@ -6,7 +6,7 @@ runningpools='/pacedata/runningpools';
 myhost=`hostname`
 poollist='/pacedata/pools/'${myhost}'poollist';
 cachestate=0;
-./iscsirefresh2.sh
+#./iscsirefresh.sh
 cd /pacedata/pools/
 allpools=`cat /pacedata/pools/$(ls /pacedata/pools/ | grep poollist)`
 cd /pace
@@ -70,7 +70,7 @@ while read -r  hostline ; do
   cat ${iscsimapping}new | grep -w "$host" | grep "notconnected"
   if [ $? -eq 0 ]; then 
    echo disconnecting $host disks
-   declare -a hostdiskids=(`cat ${iscsimapping}new | grep -w "$host" | awk '{print $3}'`);
+   hostdiskids=(`cat ${iscsimapping}new | grep -w "$host" | awk '{print $3}'`);
    for hostdiskid in "${hostdiskids[@]}"; do
     for pool2 in "${pools[@]}"; do
      /sbin/zpool list -Hv $pool2 | grep "$hostdiskid" &>/dev/null
