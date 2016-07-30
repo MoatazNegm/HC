@@ -79,8 +79,8 @@ servers list (IP or name) that will be pinged
 
 
 <actions>
-<action name="start"        timeout="20" />
-<action name="stop"         timeout="20" />
+<action name="start"        timeout="20" on-fail="restart" />
+<action name="stop"         timeout="20" on-fail="ignore" />
 <action name="monitor"      timeout="200" interval="10" depth="0" />
 <action name="reload"       timeout="20" />
 <action name="migrate_to"   timeout="20" />
@@ -103,6 +103,8 @@ END
 }
 
 dummy_start() {
+    /pace/iscsienable.sh
+    /pace/iscsiresfresh.sh
     dummy_monitor
     if [ $? =  $OCF_SUCCESS ]; then
 	return $OCF_SUCCESS
@@ -122,9 +124,9 @@ dummy_monitor() {
 	# Monitor _MUST!_ differentiate correctly between running
 	# (SUCCESS), failed (ERROR) or _cleanly_ stopped (NOT RUNNING).
 	# That is THREE states, not just yes/no.
-        sh /pace/zfsping.sh 	
+        /pace/zfsping.sh	
+        
         touch ${OCF_RESKEY_state}
-       
 	if [ -f ${OCF_RESKEY_state} ]; then
 	    return $OCF_SUCCESS
 	fi

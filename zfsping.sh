@@ -1,3 +1,4 @@
+#!/usr/local/bin/zsh
 cd /pace
 touch /tmp/zfsping
 iscsimapping='/pacedata/iscsimapping';
@@ -5,18 +6,21 @@ runningpools='/pacedata/runningpools';
 myhost=`hostname`
 poollist='/pacedata/pools/'${myhost}'poollist';
 cachestate=0;
+#./iscsirefresh.sh
 cd /pacedata/pools/
 allpools=`cat /pacedata/pools/$(ls /pacedata/pools/ | grep poollist)`
 cd /pace
 cp ${iscsimapping} ${iscsimapping}new;
-declare -a pools=(`/sbin/zpool list -H | awk '{print $1}'`)
-declare -a idledisk=();
-declare -a hostdisk=();
-declare -a alldevdisk=();
-sh iscsirefresh.sh  &>/dev/null &
-sh listingtargets.sh
-sleep 1
-runninghosts=`cat $iscsimapping | grep -v notconnected | awk '{print $1}'`
+pools=(`/sbin/zpool list -H | awk '{print $1}'`)
+idledisk=();
+hostdisk=();
+alldevdisk=();
+#/pace/iscsirefresh.sh
+counthosts=`cat $iscsimapping | grep -v connected | wc -l`
+if [ $counthosts -eq 1 ]; then 
+ zpool import -a ;
+fi
+runninghosts=`cat $iscsimapping | grep -v connected | awk '{print $1}'`
 for pool in "${pools[@]}"; do
  singledisk=`/sbin/zpool list -Hv $pool | wc -l`
  if [ $singledisk -gt 3 ]; then
@@ -64,9 +68,9 @@ while read -r  hostline ; do
    fi
   done
   cat ${iscsimapping}new | grep -w "$host" | grep "notconnected"
-  if [ $? -ne 0 ]; then 
+  if [ $? -eq 0 ]; then 
    echo disconnecting $host disks
-   declare -a hostdiskids=(`cat ${iscsimapping}new | grep -w "$host" | awk '{print $3}'`);
+   hostdiskids=(`cat ${iscsimapping}new | grep -w "$host" | awk '{print $3}'`);
    for hostdiskid in "${hostdiskids[@]}"; do
     for pool2 in "${pools[@]}"; do
      /sbin/zpool list -Hv $pool2 | grep "$hostdiskid" &>/dev/null
@@ -178,4 +182,4 @@ if [ $cachestate -ne 0 ]; then
   fi
  done < ${iscsimapping}
 fi
-
+./ZFSmonitor.sh
