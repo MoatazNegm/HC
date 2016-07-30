@@ -1,3 +1,4 @@
+#!/usr/local/bin/zsh
 cd /pace
 iscsimapping='/pacedata/iscsimapping';
 iscsitargets='/pacedata/iscsitargets';
