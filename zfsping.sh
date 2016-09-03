@@ -6,8 +6,11 @@ runningpools='/pacedata/runningpools';
 myhost=`hostname`
 poollist='/pacedata/pools/'${myhost}'poollist';
 cachestate=0;
-#./iscsirefresh.sh
+./listingtargets.sh
+./iscsirefresh.sh
 cd /pacedata/pools/
+./listingtargets.sh
+./listingtargets.sh
 allpools=`cat /pacedata/pools/$(ls /pacedata/pools/ | grep poollist)`
 cd /pace
 cp ${iscsimapping} ${iscsimapping}new;
