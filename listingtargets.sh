@@ -39,7 +39,10 @@ for host in "${hosts[@]}"; do
     rm -rf $( ls /pacedata/pools/* | grep "$host") &>/dev/null
     cd /pace
    else
-    echo "$host" $devformatted $diskid >> $iscsimapping;
+    alphadisk=`echo $devdisk | awk -F'/' '{print $3}'`
+    disksize=`lsblk -b | grep -w "$alphadisk" | awk '{print $4}'`
+    diskgiga=$((disksize/1000/1000/1000))
+    echo "$host" $devformatted $diskid $diskgiga >> $iscsimapping;
    fi
   done;
   i=$((i+1));
