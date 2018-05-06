@@ -9,7 +9,8 @@ fi
 myip=`pcs resource show CC | grep Attribute | awk '{print $2}' | awk -F'=' '{print $2 }'`
 myhost=`hostname -s`
 runningcluster=0
-systemctl status etcd &>/dev/null
+#systemctl status etcd &>/dev/null
+cat /etc/etcd/etcd.conf.yml | grep 2379
 if [ $? -eq 0 ];
 then
  runningcluster=1
@@ -19,11 +20,6 @@ then
  then
   ETCDCTL_API=3 ./runningetcdnodes.py $myip
   ETCDCTL_API=3 ./etcdput.py leader$myhost $myip
- fi
- echo $leader | grep $myip
- if [ $? -ne 0 ];
- then
-   systemctl stop etcd
  fi
  ETCDCTL_API=3 ./addknown.py
  ETCDCTL_API=3 ./allconfirmed.py
@@ -35,7 +31,8 @@ else
  if [ $? -eq 0 ];
  then
   clusterip=`cat /pacedata/clusterip`
-  ./etccluster.py
+  systemctl stop etcd
+  ./etccluster.py 'new'
   systemctl daemon-reload;
   systemctl start etcd;
   ETCDCTL_API=3 ./etcdput.py clusterip $clusterip

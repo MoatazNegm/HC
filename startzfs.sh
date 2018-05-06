@@ -42,7 +42,7 @@ then
  rm -rf /pacedata/running*
  freshcluster=1
  echo here=$clusterip
- ./etccluster.py
+ ./etccluster.py 'new'
  systemctl daemon-reload
  systemctl start etcd
  ETCDCTL_API=3 ./runningetcdnodes.py $myip
@@ -66,6 +66,9 @@ else
  then
   ETCDCTL_API=3 ./etcdget.py clusterip  > /pacedata/clusterip
   /sbin/pcs resource delete --force clusterip && /sbin/ip addr del $clusterip/24 dev $enpdev
+ ./etccluster.py 'new'
+ systemctl daemon-reload
+ systemctl start etcd
 #  pcs resource disable clusterip
  fi
 fi
