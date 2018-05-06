@@ -66,7 +66,7 @@ else
  then
   ETCDCTL_API=3 ./etcdget.py clusterip  > /pacedata/clusterip
   /sbin/pcs resource delete --force clusterip && /sbin/ip addr del $clusterip/24 dev $enpdev
- ./etccluster.py 'new'
+ ./etccluster.py 'local'
  systemctl daemon-reload
  systemctl start etcd
 #  pcs resource disable clusterip
