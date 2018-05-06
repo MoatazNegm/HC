@@ -44,10 +44,13 @@ with open('/var/www/html/des20/Data/TopStor.log','rt') as f:
  revf=f.readlines()[::-1]
  for line in revf:
   line=str(line).split(' ')
-  if int(start[1]) <= int(line[5]):
-   counter+=1
-   line[5]=line[5].replace('\n','')
-   broad.append(line)
+  try:
+   if int(start[1]) <= int(line[5]):
+    counter+=1
+    line[5]=line[5].replace('\n','')
+    broad.append(line)
+  except:
+   pass  
  if counter > 0:
   cmdline=['/pace/etcdput.py','broadcast/response/'+myhost,str(broad)]
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)

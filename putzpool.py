@@ -40,19 +40,15 @@ try:
     snap=y[0].split('@')[1]
     thisvol='/pool/'+names[0]+'/vol/'+names[1].split('@')[0]+'/snapshot/'+names[1].split('@')[1]
     thisvolvalue=y[1]+'/'+y[2]+'/'+y[5]
-    print(thisvol, thisvolvalue)
-    print('is a snapshot')
    except:
     try:
      names=y[0].split('/')
      thisvol='/pool/'+names[0]+'/vol/'+names[1]+'/'+y[6]
      thisvolvalue=y[3]+'/'+y[2]+'/'+y[4]+'/'+y[5]
-     print('is a vol')
     except:
      continue 
      #thisvol='/pool/'
      #thisvolvalue=y[3]+'/'+y[2]+'/'+y[4]+'/'+y[5]
-     #print('is a pool')
    z.append((myhost+thisvol,thisvolvalue))
   cmdline=['/sbin/zpool','list','-H']
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
@@ -114,7 +110,6 @@ try:
  h=[]
  for x in autosnap:
   y=x.split()
-  print(y)
   cmdline=['/pace/etcdput.py',myhost+'/pool/'+poolname+'/snapperiod/'+y[-1],y[-2].split('.')[0]+'/'+y[-3].split('/')[-1]+'/'+y[-2].split('.')[1]+'/'+y[-2].split('.')[2]+'/'+y[-2].split('.')[3]+'/'+y[-2].split('.')[4]+'/'+y[0].replace('/','::')+'/'+y[1].replace('/','::')+'/'+y[2].replace('/','::')+'/'+y[3].replace('/','::')+'/'+y[4].replace('/','::')]
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
 
@@ -126,7 +121,6 @@ diskc=0
 for cc in lsscsi:
   c=cc.split()
   if c[6] not in str(z):
-   print('hi',c)
    diskc=lsscsi.index(cc)
    cmdline=['/pace/etcdput.py',myhost+'/free/disk/'+str(diskc)+'/uuid',c[6]]
    result=subprocess.run(cmdline,stdout=subprocess.PIPE)

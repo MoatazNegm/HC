@@ -29,11 +29,12 @@ fi
 systemctl status etcd &>/dev/null
 if [ $? -ne 0 ];
 then
-  /sbin/pcs resource delete --force clusterip
+  /sbin/pcs resource delete --force clusterip 2>/dev/null
 # pcs resource disable clusterip
 fi
 
-result=`ETCDCTL_API=3 ./nodesearch.py $myip`
+#result=`ETCDCTL_API=3 ./nodesearch.py $myip`
+result=`cat /pacedata/nodesearch.txt`
 freshcluster=0
 echo $result | grep nothing 
 if [ $? -eq 0 ];
@@ -102,10 +103,10 @@ if [ $secdiff -ne 0 ]; then
   sh iscsirefresh.sh
   sh listingtargets.sh
   zpool import -a
-  ETCDCTL_API=3 ./putzpool.py
  fi
  touch /var/www/html/des20/Data/Getstatspid
 fi
 #zpool export -a
 rm -rf /pacedata/startzfs
 
+ETCDCTL_API=3 ./putzpool.py
