@@ -1,5 +1,5 @@
 #!/bin/python3.6
-import socket,system
+import socket,sys
 cluster_state='new'
 token=''
 hosts=[]
