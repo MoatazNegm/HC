@@ -1,0 +1,11 @@
+NAME                                                  CREATION                USED  QUOTA  USEDSNAP  REFRATIO  PROT:KIND
+pdhcp31481                                            Sat Jun 30 13:16 2018   590K   none         0     1.00x  -
+pdhcp31481/Common                                     Sat Jun 30 16:55 2018  60.0K    30G         0     1.00x  CIFS
+pdhcp31481/Common@urgent..1530370645                  Sat Jun 30 16:57 2018      0      -         -     1.00x  CIFS
+pdhcp31481/Engineering                                Sat Jun 30 16:56 2018  60.0K    30G         0     1.00x  CIFS
+pdhcp31481/Engineering@Minutely.4.2.na.na.1530371642  Sat Jun 30 17:14 2018      0      -         -     1.00x  CIFS
+pdhcp31481/Engineering@Minutely.4.2.na.na.1530371761  Sat Jun 30 17:16 2018      0      -         -     1.00x  CIFS
+pdhcp31481/Engineering@Minutely.4.2.na.na.1530371881  Sat Jun 30 17:18 2018      0      -         -     1.00x  CIFS
+pdhcp31481/Engineering@Minutely.4.2.na.na.1530372001  Sat Jun 30 17:20 2018      0      -         -     1.00x  CIFS
+pdhcp31481/cifs1                                      Sat Jun 30 16:55 2018  60.0K     2G         0     1.00x  CIFS
+pdhcp31481/repo                                       Sat Jun 30 16:56 2018  60.0K    12G         0     1.00x  CIFS

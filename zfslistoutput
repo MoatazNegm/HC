@@ -1,0 +1,5 @@
+[{'pool': dhcpxxx,'volumes':[{'volname':'Engineering','Quota':xxx,..,'snapshots':[{'snapname':'xx@xxx','Quota':xxxx',..},{'snapname':xxx,xxxx}]}}]}]
+pool 
+	volumes	
+	{volname , creation , quota:,snapshot[
+			   snapshot quota used creation
