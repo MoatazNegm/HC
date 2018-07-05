@@ -13,21 +13,15 @@ for a in y:
      if "pdhc" in a:
           raidlist=[]
           zdict={}
-          zdict={ 'name':c[0],"snapshot":c[1]}
+          zdict={ 'name':c[0],"snapshot":c[1] ,"USED":b[6], "QUOTA":b[7], "USEDSNAP":b[8], "REFRATIO":b[9] ,"PROT:KIND":b[10]}
           zpool.append(zdict)
-          sdict={}
-          zdict={ "CREATION":b[1:6]}
-          zpool.append(zdict)
+
 
      elif any(raid in a for raid in raidtypes):
 
-          rdict={ 'name':c[2],"snapshot":c[1]}
+          rdict={ 'name':c[0],"snapshot":c[1]}
           raidlist.append(rdict)
 
-     elif any(raid in a for raid in raidtypes):
-
-          zdict={'name':c[0],"snapshot":c[1]}
-          raidlist.append(rdict)
 
 
 print(zpool)
