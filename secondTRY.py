@@ -4,24 +4,24 @@ with open('zfslist.txt') as f:
      read_data = f.read()
      y = read_data.split("\n")
 
-raidtypes=["'Common','Engineering','cifs1','repo'"]
 zpool=[]
 
 for a in y:
      b=a.split()
-     c=re.split('; |, | |@',a)
-     if "pdhc" in a:
-          raidlist=[]
+     c=re.split('; |, | |/|@',a)
+     if "pdhc" in a and "/" not in a:
+          volumes=[]
           zdict={}
-          zdict={ 'name':c[0],"snapshot":c[1] ,"USED":b[6], "QUOTA":b[7], "USEDSNAP":b[8], "REFRATIO":b[9] ,"PROT:KIND":b[10]}
+          zdict={ 'PoolName':c[0] , "Volumes":volumes}
           zpool.append(zdict)
-
-
-     elif any(raid in a for raid in raidtypes):
-
-          rdict={ 'name':c[0],"snapshot":c[1]}
-          raidlist.append(rdict)
-
-
+     if "pdhc" in a and "/" in a and "@" not in a:
+         snapshots=[]
+         rdict={}
+         rdict={"Volname": c[1], "Snapshots":snapshots,"USED":b[6], "QUOTA":b[7], "USEDSNAP":b[8], "REFRATIO":b[9] ,"PROT:KIND":b[10]}
+         volumes.append(rdict)
+     if "pdhc" in a and "/" in a and "@" in a:
+         rdict={}
+         rdict={"snapname": c[2]}
+         snapshots.append(rdict)
 
 print(zpool)
