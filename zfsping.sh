@@ -21,6 +21,7 @@ oldclocker=0
 clockdiff=0
 date=`date`
 enpdev='eno1'
+touch  /pacedata/perfmon
 echo $date >> /root/zfspingstart
 systemctl restart target
 cd /pace
@@ -94,14 +95,14 @@ do
   leaderall=` ./etcdget.py leader --prefix 2>/dev/null`
   if [[ -z $leaderall ]]; 
   then
- if [ $perfmon -eq 1 ]; then
+ if [[ $perfmon -eq 1 ]]; then
    /TopStor/queuethis.sh FixIamleader start system &
  fi
    echo no leader although I am primary node >> /root/zfspingtmp
    ./runningetcdnodes.py $myip 2>/dev/null
    ./etcddel.py leader --prefix 2>/dev/null &
    ./etcdput.py leader/$myhost $myip 2>/dev/null &
- if [ $perfmon -eq 1 ]; then
+ if [[ $perfmon -eq 1 ]]; then
    /TopStor/queuethis.sh FixIamleader stop system &
  fi
   fi
