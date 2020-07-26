@@ -4,7 +4,6 @@ from etcdget import etcdget as get
 
 myhost=socket.gethostname()
 leader=get('leader','--prefix')
-print('leader', leader)
 if myhost in str(leader):
  frstnode=get('frstnode')[0].split('/')[0]
  if myhost not in frstnode:

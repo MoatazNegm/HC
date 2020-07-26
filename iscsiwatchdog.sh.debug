@@ -1,0 +1,92 @@
+#!/bin/sh
+
+adddisk=`echo $@ | awk '{print $1}'`
+myhost=`echo $@ | awk '{print $2}'`
+leader=`echo $@ | awk '{print $3}'`
+basetime=`date +%s`
+origtime=`date +%s`
+newtime=`date +%s`
+echo iscsiwatchdog start $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
+dmesg -n 1
+if [[ "$#" -eq 0 ]];
+then
+ islocal=0
+else
+ islocal=1
+ myip=`echo $@ | awk '{print $4}'`
+fi
+pgrep iscsid -a
+while [ $? -ne 0 ];
+do
+ sleep 1
+ pgrep iscsid -a
+done
+newtime=`date +%s`
+echo iscsiwatchdog iscsid  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
+pgrep etcd -a
+while [ $? -ne 0 ];
+do
+ sleep 1
+ pgrep etcd -a
+done
+newtime=`date +%s`
+echo iscsiwatchdog etcd  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
+echo start >> /root/iscsiwatch
+echo $adddisk | grep adddisk
+if [ $? -eq 0 ];
+then
+ sh /pace/iscsirefresh.sh
+ newtime=`date +%s`
+ echo iscsiwatchdog iscsirefresh  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+ basetime=$newtime
+ echo finished start of iscsirefresh  > /root/iscsiwatch
+ sh /pace/listingtargets.sh
+ echo finished listingtargets >> /root/iscsiwatch
+ newtime=`date +%s`
+ echo iscsiwatchdog listingtargets  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+ basetime=$newtime
+ echo updating iscsitargets >> /root/iscsiwatch
+ sh /pace/addtargetdisks.sh
+ newtime=`date +%s`
+ echo iscsiwatchdog addtargetdisks  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+ basetime=$newtime
+ echo finished updtating iscsitargets >> /root/iscsiwatch
+ if [[ $islocal -eq 0 ]];
+ then
+  echo putzpool to leader >> /root/zfspingtmp
+ newtime=`date +%s`
+  echo iscsiwatchdog putzpooltoleader  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+ basetime=$newtime
+  echo putzpool to leader hi="$#" >> /root/iscsiwatch
+  ETCDCTL_API=3 /pace/putzpool.py isciwatchversion &
+  echo finished putzpool to leader hi="$#" >> /root/iscsiwatch
+ newtime=`date +%s`
+ echo iscsiwatchdog finish putzpooltoleader  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+ basetime=$newtime
+ else
+  echo putzpool local $myip $myhost $islocal >> /root/zfspingtmp
+  echo putzpool local $myip $myhost $islocal >> /root/iscsiwatch
+ fi
+fi 
+newtime=`date +%s`
+echo iscsiwatchdog beforefrstnode  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
+echo $myhost | grep $leader
+if [ $? -eq 0 ];
+then
+ ./etcdget.py frstnode | awk -F'/' '{print $1}' | grep $myhost
+ if [ $? -eq 0 ];
+ then
+  pgrep checkfrstnode -a
+  if [ $? -ne 0 ];
+  then
+   /pace/frstnodecheck.py
+  fi
+ fi
+fi
+newtime=`date +%s`
+echo iscsiwatchdog stopping  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
