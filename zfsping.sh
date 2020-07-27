@@ -25,6 +25,7 @@ clockdiff=0
 date=`date`
 enpdev='enp0s8'
 echo $date >> /root/zfspingstart
+/pace/collective.py &
 systemctl restart target >/dev/null
 cd /pace
 rm -rf /pacedata/addiscsitargets 2>/dev/null
@@ -42,23 +43,27 @@ date=`date `
 myhost=`hostname -s`
 myip=`/sbin/pcs resource show CC | grep Attributes | awk -F'ip=' '{print $2}' | awk '{print $1}'`
 echo starting in $date >> /root/zfspingtmp
+lsscsiflag='init'
 basetime=`date +%s`
 origtime=`date +%s`
-sleep 4
 newtime=`date +%s`
 echo before loop $((newtime-basetime)) ,total=$((newtime-origtime))> /root/zfspingtiming
 basetime=$newtime
+ostamp=0
 while true;
 do
+ lsscsi=`lsscsi | wc -c`'lsscsi' >/dev/null
+ echo $lsscsi | grep $oldsscsi
+ if [ $? -eq 0 ];
+ then
+  lsscsiflag='zpooltoimport'
+ fi 
 newtime=`date +%s`
 echo starting new loop $((newtime-basetime)) ,total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
 origtime=$newtime
-  pgrep fixpool 
-  if [ $? -ne 0 ];
-  then
-    /TopStor/fixpool.py  
-  fi
+  echo $ostamp fixpool  hello > /pacedata/collectiv &
+  ostamp=$((ostamp+1))
   perfmon=`cat /pacedata/perfmon `
   needlocal=0
   runningcluster=0
@@ -67,7 +72,9 @@ origtime=$newtime
   echo $perfmon | grep 1 >/dev/null
   if [ $? -eq 0 ];
   then
-    /TopStor/queuethis.sh AmIprimary start system 
+   stamp=`date +%s`
+   echo $ostamp logqueue AmIprimary start system $stamp > /pacedata/collectiv & 
+   ostamp=$((ostamp+1))
   fi
   echo check if I primary etcd >> /root/zfspingtmp
 newtime=`date +%s`
@@ -92,8 +99,9 @@ basetime=$newtime
     fi
     if [ $primtostd -eq 3 ];
     then
-      /TopStor/logmsg.py Partsu05 info system $myhost
-      primtostd=$((primtostd+1))
+     echo $ostamp logmsg Partsu05 info system $myhost > /pacedata/collectiv & 
+     ostamp=$((ostamp+1))
+     primtostd=$((primtostd+1))
     fi
     if [ $isprimary -eq 3 ];
     then
@@ -107,13 +115,19 @@ basetime=$newtime
       partnersync=0
       /TopStor/broadcast.py SyncHosts /TopStor/pump.sh addhost.py >/dev/null
       touch /pacedata/addiscsitargets 
-      pgrep putzpool 
-      if [ $? -ne 0 ];
-      then
-        /pace/putzpool.py 1 $isprimary $primtostd  >/dev/null 
-      fi
       ./etcddel.py toimport/$myhost >/dev/null
       toimport=2
+      echo $lsscsiflag | grep putzpool
+      if [ $? -eq 0 ];
+      then
+       pgrep putzpool 
+       if [ $? -ne 0 ];
+       then
+         /pace/putzpool.py 1 $isprimary $primtostd  >/dev/null 
+         /TopStor/HostgetIPs >/dev/null
+         lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
+       fi
+      fi
     fi
     runningcluster=1
     echo checking leader record \(it should be me\)  >> /root/zfspingtmp
@@ -303,11 +317,16 @@ newtime=`date +%s`
 echo runningputzpool $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
         echo running putzpool and nfs
-        pgrep putzpool 
-        if [ $? -ne 0 ];
+        echo $lsscsiflag | grep putzpool
+        if [ $? -eq 0 ];
         then
+         pgrep putzpool 
+         if [ $? -ne 0 ];
+         then
           /pace/putzpool.py 2 $isprimary $primtostd  >/dev/null 
           /TopStor/HostgetIPs >/dev/null
+          lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
+         fi
         fi
         chgrp apache /var/www/html/des20/Data/* >/dev/null
         chmod g+r /var/www/html/des20/Data/* >/dev/null
@@ -450,6 +469,9 @@ basetime=$newtime
           /pace/etcdsync.py $myip nextlead nextlead >/dev/null
           /pace/sendhost.py $leaderip 'logall' 'recvreq' $myhost  >/dev/null 
           isknown=$((isknown+1))
+newtime=`date +%s`
+echo finishrunning sendhost  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
         fi
         if [[ $isknown -le 10 ]];
         then
@@ -457,6 +479,9 @@ basetime=$newtime
         fi
         if [[ $isknown -eq 3 ]];
         then
+newtime=`date +%s`
+echo isknowneq3  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
           /pace/etcdput.py ready/$myhost $myip 
           /pace/etcdput.py ActivePartners/$myhost $myip 
           /TopStor/broadcast.py SyncHosts /TopStor/pump.sh addhost.py >/dev/null
@@ -482,18 +507,26 @@ basetime=$newtime
   then
     /TopStor/queuethis.sh AmIprimary stop system 
   fi
-  pgrep putzpool 
-  if [ $? -ne 0 ];
+newtime=`date +%s`
+echo running putzpool 3 $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
+  echo $lsscsiflag | grep putzpool
+  if [ $? -eq 0 ];
   then
+   pgrep putzpool 
+   if [ $? -ne 0 ];
+   then
     /pace/putzpool.py 3 $isprimary $primtostd > /dev/null 
-   /TopStor/HostgetIPs	>/dev/null 
+    /TopStor/HostgetIPs	>/dev/null 
+    lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
+   fi
   fi
   echo checking if I need to run local etcd >> /root/zfspingtmp
 newtime=`date +%s`
 echo checkingifIneedlocal $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
   echo checking if I need to run local etcd 
-  if [[ $needlocal -eq 1 ]];
+  if [ $needlocal -eq 1 ];
   then
     echo $perfmon | grep 1 >/dev/null
     if [ $? -eq 0 ];
@@ -542,7 +575,7 @@ basetime=$newtime
     fi
     continue 
   fi
-  if [[ $needlocal -eq  2 ]];
+  if [ $needlocal -eq  2 ];
   then
     echo I am already local etcd running iscsirefresh on $myip $myhost  >> /root/zfspingtmp
 newtime=`date +%s`
@@ -586,7 +619,7 @@ newtime=`date +%s`
 echo checkprimary $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
   echo Checking  I am primary
-  if [[ $runningcluster -eq 1 ]];
+  if [ $runningcluster -eq 1 ];
   then
     echo Yes I am primary so will check for known hosts >> /root/zfspingtmp
 newtime=`date +%s`
@@ -598,22 +631,34 @@ basetime=$newtime
     then
       ./remknown.py $myhost >/dev/null  
     fi
+newtime=`date +%s`
+echo finished remknown $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
     pgrep  addknown 
     if [ $? -ne 0 ];
     then
       ./addknown.py $myhost >/dev/null  
     fi
+newtime=`date +%s`
+echo finished addknown $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
     pgrep addactive 
     if [ $? -ne 0 ];
     then
       ./addactive.py $myhost >/dev/null  
     fi
+newtime=`date +%s`
+echo finished addactive $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
     pgrep  selectimport 
     if [ $? -ne 0 ];
     then
       echo /TopStor/selectimport.py $myhost 
       /TopStor/selectimport.py $myhost >/dev/null 
     fi
+newtime=`date +%s`
+echo finished selectimport $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
   fi 
   echo toimport = $toimport >> /root/zfspingtmp
 newtime=`date +%s`
@@ -671,13 +716,13 @@ newtime=`date +%s`
 echo checkingzpool $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
       echo checking zpool to import
-      lsscsi=`lsscsi | wc -c`'lsscsi' >/dev/null
-      echo $lsscsi | grep $oldsscsi
+      echo $lsscsiflag | grep zpooltoimport
       if [ $? -eq 0 ];
       then
        pgrep zpooltoimport
        if [ $? -ne 0 ];
        then
+        lsscsiflag=$lsscsiflag'putzpool'
         /pace/iscsiwatchdog.sh adddisk  $myhost $leader >/dev/null
         /TopStor/zpooltoimport.py all >/dev/null
         lsscsicount=$((lsscsicount+1))
@@ -685,14 +730,21 @@ basetime=$newtime
         then
          oldlsscsi=$lsscsi
 	 lsscsicount=0
+	 lsscsiflag='putzpool'
         fi
        fi
       fi
+newtime=`date +%s`
+echo beforeVolumeCheck $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
       pgrep  VolumeCheck 
       if [ $? -ne 0 ];
       then
         /TopStor/VolumeCheck >/dev/null 
       fi
+newtime=`date +%s`
+echo afterVolumeCheck $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+basetime=$newtime
     fi
   fi
   if [ $toimport -eq 0 ];
