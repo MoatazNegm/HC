@@ -62,7 +62,7 @@ newtime=`date +%s`
 echo starting new loop $((newtime-basetime)) ,total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
 origtime=$newtime
-  echo $ostamp fixpool  hello > /pacedata/collectiv &
+  echo $ostamp fixpool  $myhost > /pacedata/fixpool &
   ostamp=$((ostamp+1))
   perfmon=`cat /pacedata/perfmon `
   needlocal=0
@@ -73,7 +73,7 @@ origtime=$newtime
   if [ $? -eq 0 ];
   then
    stamp=`date +%s`
-   echo $ostamp logqueue AmIprimary start system $stamp > /pacedata/collectiv & 
+   echo $ostamp logqueue AmIprimary start system $stamp > /pacedata/isprimary & 
    ostamp=$((ostamp+1))
   fi
   echo check if I primary etcd >> /root/zfspingtmp
@@ -99,7 +99,7 @@ basetime=$newtime
     fi
     if [ $primtostd -eq 3 ];
     then
-     echo $ostamp logmsg Partsu05 info system $myhost > /pacedata/collectiv & 
+     echo $ostamp logmsg Partsu05 info system $myhost > /pacedata/isprimary & 
      ostamp=$((ostamp+1))
      primtostd=$((primtostd+1))
     fi
@@ -110,12 +110,16 @@ newtime=`date +%s`
 echo sendinginfo  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
       echo for $isprimary sending info Partsu03 booted with ip
-      /pace/etcdput.py ready/$myhost $myip
-      /pace/etcdput.py ActivePartners/$myhost $myip
+      echo $ostamp  etcdput ready/$myhost $myip > /pacedata/isprimary & 
+      ostamp=$((ostamp+1))
+      echo $ostamp  etcdput ActivePartners/$myhost $myip > /pacedata/isprimary & 
+      ostamp=$((ostamp+1))
       partnersync=0
-      /TopStor/broadcast.py SyncHosts /TopStor/pump.sh addhost.py >/dev/null
+      echo $ostamp  broadcastthis SyncHosts /TopStor/pump.sh addhost.py > /pacedata/isprimary & 
+      ostamp=$((ostamp+1))
       touch /pacedata/addiscsitargets 
-      ./etcddel.py toimport/$myhost >/dev/null
+      echo $ostamp  etcddel toimport/$myhost > /pacedata/isprimary & 
+      ostamp=$((ostamp+1))
       toimport=2
       echo $lsscsiflag | grep putzpool
       if [ $? -eq 0 ];
@@ -123,6 +127,9 @@ basetime=$newtime
        pgrep putzpool 
        if [ $? -ne 0 ];
        then
+         stamp=`date +%s`
+         echo $ostamp  putzpool $stamp no1 $isprimary $primtostd > /pacedata/putzpool & 
+         ostamp=$((ostamp+1))
          /pace/putzpool.py 1 $isprimary $primtostd  >/dev/null 
          /TopStor/HostgetIPs >/dev/null
          lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
