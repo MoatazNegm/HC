@@ -23,7 +23,7 @@ clocker=0
 oldclocker=0
 clockdiff=0
 date=`date`
-enpdev='enp0s8'
+enpdev='eno1'
 echo $date >> /root/zfspingstart
 pkill collective
 /pace/collective.py &
