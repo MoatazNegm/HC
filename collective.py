@@ -689,59 +689,42 @@ threads.update({'tosync':0, 'setnamespace':0, 'etcdputlocal':0, 'etcddellocal':0
 threads.update({'remknown':0, 'evacuatelocal':0, 'syncthispartner':0, 'checkknown':0, 'syncthistoleader':0})
 threads.update({'selectimport':0})
 
+def tt(pipe,*args):
+ global threads
+ global ispd
+ cmdline='rm -rf  /pacedata/'+pipe
+ result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ cmdline='mkfifo -m 660 /pacedata/'+pipe
+ result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ while True: 
+  with open('/pacedata/'+pipe) as colv:
+   colvlst=colv.readlines()
+   colvlst.sort(key=lambda x:int(x.split()[0]))
+   for cmnd in colvlst:
+    cmndnm=cmnd.split()[1]
+    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
+     x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
+     x.start()
+ return
 
 def isprimaryt(*args):
- global threads
- global ispd
- cmdline='rm -rf  /pacedata/isprimary'
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
- cmdline='mkfifo -m 660 /pacedata/isprimary'
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
- while True: 
-  with open('/pacedata/isprimary') as colv:
-   colvlst=colv.readlines()
-   colvlst.sort(key=lambda x:int(x.split()[0]))
-   for cmnd in colvlst:
-    cmndnm=cmnd.split()[1]
-    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
-     x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
-     x.start()
+ pipe='isprimary'
+ tt(pipe,*args)
+ return
 
 def fixpoolt(*args):
- global threads
- global ispd
- cmdline='rm -rf  /pacedata/fixpool'
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
- cmdline='mkfifo -m 660 /pacedata/fixpool'
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
- while True: 
-  with open('/pacedata/fixpool') as colv:
-   colvlst=colv.readlines()
-   colvlst.sort(key=lambda x:int(x.split()[0]))
-   for cmnd in colvlst:
-    cmndnm=cmnd.split()[1]
-    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
-     x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
-     x.start()
- threads['addknown']=0
+ pipe='fixpool'
+ tt(pipe,*args)
+ return
+
+def zpooltoimportt(*args):
+ pipe='zpooltoimport'
+ tt(pipe,*args)
  return
 
 def putzpoolt(*args):
- global threads
- global ispd
- cmdline='rm -rf  /pacedata/putzpool'
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
- cmdline='mkfifo -m 660 /pacedata/putzpool'
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
- while True: 
-  with open('/pacedata/putzpool') as colv:
-   colvlst=colv.readlines()
-   colvlst.sort(key=lambda x:int(x.split()[0]))
-   for cmnd in colvlst:
-    cmndnm=cmnd.split()[1]
-    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
-     x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
-     x.start()
+ pipe='putzpool'
+ tt(pipe,*args)
  return
 
 def etcdallt(*args):
@@ -764,25 +747,9 @@ def etcdallt(*args):
 
 
 def checklocalt(*args):
- global threads
- global ispd
- cmdline='rm -rf  /pacedata/checklocal'
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
- cmdline='mkfifo -m 660 /pacedata/checklocal'
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
- while True: 
-  with open('/pacedata/checklocal') as colv:
-   colvlst=colv.readlines()
-   colvlst.sort(key=lambda x:int(x.split()[0]))
-   for cmnd in colvlst:
-    cmndnm=cmnd.split()[1]
-    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
-     x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
-     x.start()
+ pipe='checklocal'
+ tt(pipe,*args)
  return
-
-
- return 
 
 def checkinitt(*args):
  return
@@ -798,6 +765,8 @@ if __name__=='__main__':
  x=Thread(target=etcdallt,name='etcdall',args=(1,1))
  x.start()
  x=Thread(target=checklocalt,name='checklocal',args=(1,1))
+ x.start()
+ x=Thread(target=zpooltoimportt,name='importpools',args=(1,1))
  x.start()
  x=Thread(target=checkinitt,name='checkinit',args=(1,1))
  x.start()

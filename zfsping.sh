@@ -613,12 +613,8 @@ basetime=$newtime
 newtime=`date +%s`
 echo finished addactive $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
-    pgrep  selectimport 
-    if [ $? -ne 0 ];
-    then
-      echo /TopStor/selectimport.py $myhost 
-      /TopStor/selectimport.py $myhost >/dev/null 
-    fi
+    echo $ostamp selectimport  $myhost $myip  > /pacedata/checklocal & 
+    ostamp=$((ostamp+1))
 newtime=`date +%s`
 echo finished selectimport $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
@@ -651,8 +647,10 @@ basetime=$newtime
       then
         if [ $leaderfail -eq 0 ];
         then
-          /TopStor/logmsg.py Partsu04 info system $myhost $myip 
-          ./etcddel.py cann --prefix >/dev/null 
+         echo $ostamp logmsgthis Partsu04 info system $myhost $myip > /pacedata/etcdall & 
+         ostamp=$((ostamp+1))
+         echo $ostamp etcddel cann --prefix > /pacedata/etcdall & 
+         ostamp=$((ostamp+1))
         else
           leaderfail=0
         fi
@@ -661,15 +659,18 @@ basetime=$newtime
       then
         if [ $leaderfail -eq 0 ];
         then
-          /TopStor/logmsg.py Partsu03 info system $myhost $myip 
-          ./etcddel.py cann --prefix >/dev/null 
+         echo $ostamp logmsgthis Partsu03 info system $myhost $myip > /pacedata/etcdall & 
+         ostamp=$((ostamp+1))
+         echo $ostamp etcddel cann --prefix > /pacedata/etcdall & 
+         ostamp=$((ostamp+1))
         else
           leaderfail=0
         fi
       fi
       if [ $toimport -eq 3 ];
       then
-        /TopStor/logmsg.py Partsu06 info system 
+       echo $ostamp Partsu06 info system > /pacedata/etcdall & 
+       ostamp=$((ostamp+1))
       fi
       toimport=0
       oldclocker=$clocker
@@ -682,12 +683,13 @@ basetime=$newtime
       echo $lsscsiflag | grep zpooltoimport
       if [ $? -eq 0 ];
       then
-       pgrep zpooltoimport
+       echo $ostamp zpooltoimport all > /pacedata/zpooltoimport & 
+       ostamp=$((ostamp+1))
+       pgrep iscsiwatchdog
        if [ $? -ne 0 ];
        then
         lsscsiflag=$lsscsiflag'putzpool'
         /pace/iscsiwatchdog.sh adddisk  $myhost $leader >/dev/null
-        /TopStor/zpooltoimport.py all >/dev/null
         lsscsicount=$((lsscsicount+1))
         if [ lsscsicount -ge 1 ];
         then
