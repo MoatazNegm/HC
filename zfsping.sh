@@ -705,7 +705,7 @@ basetime=$newtime
       pgrep  VolumeCheck 
       if [ $? -ne 0 ];
       then
-        /TopStor/VolumeCheck >/dev/null 
+        /TopStor/VolumeCheck >/dev/null &
       fi
 newtime=`date +%s`
 echo afterVolumeCheck $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
@@ -724,8 +724,10 @@ basetime=$newtime
   echo Clockdiff = $clockdiff 
   if [ $clockdiff -ge 500 ];
   then
-    ./etcddel.py toimport/$myhost >/dev/null 
-    /TopStor/logmsg.py Partst06 info system  
+    echo $ostamp etcddel toimport/$myhost --prefix > /pacedata/etcdall & 
+    ostamp=$((ostamp+1))
+    echo $ostamp logmsgthis Partst06 info system $myhost $myip > /pacedata/etcdall & 
+    ostamp=$((ostamp+1))
     toimport=3
     oldclocker=$clocker
     clockdiff=0
@@ -740,11 +742,8 @@ newtime=`date +%s`
 echo Collecingachange $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
   echo Collecting a change in system occured 
-  pgrep  changeop 
-  if [ $? -ne 0 ];
-  then
-    ETCDCTL_API=3 /pace/changeop.py $myhost >/dev/null 
-  fi
+  echo $ostamp changeop $myhost --prefix > /pacedata/zpooltoimport & 
+  ostamp=$((ostamp+1))
   pgrep  selectspare 
   if [ $? -ne 0 ];
   then

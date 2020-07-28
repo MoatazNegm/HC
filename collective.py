@@ -6,6 +6,7 @@ from etcdput import etcdput as put
 from etcdget import etcdget as get 
 from etcddel import etcddel as deli 
 from etcddellocal import etcddel as delilocal
+from ast import literal_eval as mtuple
 from broadcast import broadcast as broadcast 
 from os import listdir
 from datetime import datetime
@@ -19,6 +20,40 @@ from etcdputlocal import etcdput as putlocal
 
 threads={}
 ispd={}
+
+def delall(*args):
+ if len(args) > 1:
+  dels(args[1]+'/lists/'+args[0])
+ else:
+  dels('lists/'+args[0])
+ return
+
+def getall(*args):
+ if len(args) > 1:
+  alls=get(args[1]+'/lists/'+args[0])
+ else:
+  alls=get('lists/'+args[0])
+ if len(alls) > 0 and alls[0] != -1:
+  alls=mtuple(alls[0])
+  return alls
+ else:
+  return [-1]
+
+def putall(*args):
+ alls=getall(args[0])
+ put(args[1]+'/lists/'+args[0],str(alls))
+
+def norm(val):
+ units={'B':1/1024**2,'K':1/1024, 'M': 1, 'G':1024 , 'T': 1024**2 }
+ if type(val)==float:
+  return val
+ if val[-1] != 'B':
+  return float(val) 
+ else:
+  if val[-2] in list(units.keys()):
+   return float(val[:-2])*float(units[val[-2]])
+  else:
+   return float(val[:-1])*float(units['B'])
 
 def putzpool(*args):
  threads['putzpool']=1
@@ -674,20 +709,62 @@ def importpls(*args):
  threads['importpls']=0
  return
 
+def forceoffline(*args):
+ alls=getall(args[0])
+ mypools=[x for x in alls['pools'] if 'pree' not in x['name'] ]  
+ for mypool in mypools:
+  if args[1] in str(mypool):
+   cmdline='/sbin/zpool offline '+mypool['name']+' '+args[1]
+   subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ return
 
+def changeop(*args):
+ threads['changeop']=1
+ perfmon=get('perfmon')
+ if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
+  logqueue('changeop.py','start','system',stamp)
+ alls=getall(args[0])
+ if type(alls) != dict :
+  threads['changeop']=0
+  return -1
+ if len(args) > 1:
+  if args[1] == 'old':
+   putall(args[0],'old')
+   threads['changeop']=0
+   return 1
+ oldlls=getall(args[0],'old')
+ if type(oldlls) != dict :
+  for disk in alls['defdisks']:
+   logmsg.sendlog('Diwa1','warning','system', disk['pool'])
+   cmdline='/sbin/zpool offline '+disk['pool']+' '+disk['name']
+   subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+  putall(args[0],'old')
+  threads['changeop']=0
+  return
+ changeddisks={k:alls[k] for k in alls if alls[k] != oldlls[k] and 'disk' in k} 
+ print('changed',len(changeddisks))
+ if len(changeddisks) > 0:
+  delall(args[0],'old')
+ if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
+  logqueue('changeop.py','start','system',stamp)
+ threads['changeop']=0
+ return
+ 
 ispd.update({'tosync':tosync, 'addknown':addknown, 'runningetcdnodes':runningetcdnodes, 'trythis':trythis })
 ispd.update({'fixpool':fixpool, 'logqueue':logqueue, 'logmsg':logmsg, 'sendhost':sendhost,'etcdput':etcdput })
 ispd.update({'importpls':importpls, 'putzpool':putzpool, 'HostgetIPs':HostgetIPs, 'broadcastthis':broadcastthis})
 ispd.update({'addactive':addactive, 'etcddel':etcddel, 'etcdputlocal':etcdputlocal, 'etcddellocal':etcddellocal})
 ispd.update({'checkknown':checkknown, 'syncthistoleader':syncthistoleader, 'setnamespace':setnamespace})
 ispd.update({'remknown':remknown, 'evacuatelocal':evacuatelocal, 'syncthispartner':syncthispartner})
-ispd.update({'selectimport':selectimport})
+ispd.update({'selectimport':selectimport, 'changeop':changeop})
 
 threads.update({'importpls':0, 'addknown':0, 'runningetcdnodes':0, 'trythis':0, 'fixpool':0, 'logqueue':0})
 threads.update({'addactive':0, 'etcddel':0,'fixpool':0, 'logmsg':0, 'sendhost':0, 'etcdput':0, 'broadcastthis':0})
 threads.update({'tosync':0, 'setnamespace':0, 'etcdputlocal':0, 'etcddellocal':0, 'putzpool':0, 'HostgetIPs':0})
 threads.update({'remknown':0, 'evacuatelocal':0, 'syncthispartner':0, 'checkknown':0, 'syncthistoleader':0})
-threads.update({'selectimport':0})
+threads.update({'selectimport':0, 'changeop':0})
 
 def tt(pipe,*args):
  global threads
