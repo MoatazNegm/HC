@@ -459,7 +459,6 @@ def syncthistoleader(*args):
  return
 
 def checkknown(*args):
- myhost=args[0]
  myip=args[1]
  myconfig=getlocal(myip,'configured')
  if 'yes' in str(myconfig):
@@ -468,17 +467,227 @@ def checkknown(*args):
   put('toactivate'+myhost,myip)
  return 
 
+def evacuatelocal(*args):
+ threads['evacuaelocal']=1
+ thehosts=get('toremove','start')
+ if thehosts[0]==-1:
+  threads['evacuaelocal']=0
+  return
+ leader=get('leader','--prefix')[0][0].replace('leader/','')
+ myip=get('ready',myhost)[0][1]
+ for host in thehosts:
+  hostn=host[0].replace('toremove/','')
+  hostip=get('ActivePartners/'+hostn)[0]
+  if myhost in hostn and myhost in leader:
+   cmdline=['/TopStor/Converttolocal.sh',myip]
+   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+  if myhost in hostn and myhost not in leader:
+   putlocal(myip,'toreset','yes')
+   put('toremovereset/'+hostn,'reset')
+   cmdline=['/pace/removetargetdisks.sh', hostn, hostip]
+   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+   cmdline=['/TopStor/rebootme','finished']
+   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+  hostreset=get('toremovereset/'+hostn,'reset')[0]
+  if hostn in str(hostreset): 
+   if myhost not in hostn : 
+    hosts=get('toremove/'+hostn,'done')
+    if myhost not in str(hosts):
+     put('toremove/'+hostn+'/'+myhost,'done')
+     cmdline=['/pace/removetargetdisks.sh', hostn, hostip]
+     result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+   if myhost not in hostn and myhost in leader:
+    actives=get('Active','--prefix')
+    dones=get('toremove/'+hostn,'done')
+    doneall=1
+    for active in actives:
+     activen=active[0].replace('ActivePartners/','')
+     if activen not in str(dones) and activen not in str(thehosts): 
+      doneall=0
+      break
+    if doneall==1:
+     frstnode=get('frstnode')[0]
+     newnode=frstnode.replace('/'+hostn,'').replace(hostn+'/','')
+     put('frstnode',newnode)
+     deli("", hostn)
+     put('tosync','yes')
+     logmsg.sendlog('Evacuaesu01','info','system',hostn)
+ threads['evacuaelocal']=0
+ return
+
+def remknown(*args):
+ threads['remknown']=1
+ perfmon=get('perfmon')
+ if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
+  logqueue('remknown.py','start','system',stamp)
+ known=get('known','--prefix')
+ nextone=get('nextlead')
+ if str(nextone[0]).split('/')[0] not in  str(known):
+  deli('nextlead')
+  nextone=[]
+ if known != []:
+  for kno in known:
+   kn=kno 
+   heart=getlocal(kn[1],'local','--prefix')
+   if( '-1' in str(heart) or len(heart) < 1) or (heart[0][1] not in kn[1]):
+    deli(kn[0])
+    if kn[1] in str(nextone):
+     deli('nextlead')
+    logmsg.sendlog('Partst02','warning','system', kn[0].replace('known/',''))
+    deli('ready/'+kn[0].replace('known/',''))
+    deli('old','--prefix')
+    cmdline=['/pace/hostlost.sh',kn[0].replace('known/','')]
+    subprocess.run(cmdline,stdout=subprocess.PIPE)
+    deli('localrun/'+str(kn[0]))
+    broadcast('broadcast','/pace/hostlostfromleader.sh',kn[0].replace('known/',''))
+    broadcast('broadcast','/TopStor/pump.sh','zpooltoimport.py','all')
+   else:
+    if nextone == []:
+     put('nextlead',kn[0].replace('known/','')+'/'+kn[1])
+     broadcast('broadcast','/TopStor/pump.sh','syncnext.sh','nextlead','nextlead')
+ if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
+  logqueue('remknown.py','stop','system',stamp)
+ threads['remknown']=0
+ return
+
+def addactive(*args):
+ threads['addactive']=1
+ perfmon=get('perfmon')
+ if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
+  logqueue('addactive.py','start','system',stamp)
+ toactivate=get('toactivate','--prefix')
+ if toactivate != []:
+  for x in toactivate:
+   Active=get('ActivePartners','--prefix')
+   if x[0].replace('toactivate','') in str(Active):
+    deli('toactivate',x[0])
+   put('known/'+x[0].replace('toactivate',''),x[1])
+   put('nextlead',x[0].replace('toactivate','')+'/'+x[1])
+   deli('losthost/'+x[0].replace('toactivate',''))
+   frstnode=get('frstnode')
+   if x[0].replace('toactivate','') not in frstnode[0]:
+    newfrstnode=frstnode[0]+'/'+x[0].replace('toactivate','')
+    put('frstnode',newfrstnode)
+   put('change/'+x[0].replace('toactivate','')+'/booted',x[1])
+   put('tosync','yes')
+   broadcast('broadcast','/TopStor/pump.sh','syncnext.sh','nextlead','nextlead')
+ else:
+  print('toactivate is empty')
+ if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
+  logqueue('addactive.py','stop','system',stamp)
+ threads['addactive']=0
+ return
+
+def selectimport(*args):
+ threads['selectimport']=1
+ allpools=get('pools/','--prefix')
+ knowns=get('known','--prefix')
+ for poolpair in allpools:
+  pool=poolpair[0].split('/')[1]
+  chost=poolpair[1]
+  nhost=str(get('poolsnxt/'+pool)[0])
+  if nhost not in str(knowns) or nhost in chost:
+   deli('poolsnxt',nhost)
+   nhost='nothing'
+  if nhost in str(knowns):
+   continue
+  hosts=poolall.getall(chost)['phosts']
+  for host in hosts: 
+   if host != chost:
+    with open('/root/selecttmp','a') as f:
+     f.write('\npoolpair:'+str(poolpair))
+     f.write(' ,host: '+host)
+     f.write(' ,chost:'+chost)
+     f.write(' ,nhost:'+nhost)
+    if len(host) > 2 and len(pool) > 4:
+     put('poolsnxt/'+pool,host)
+     broadcasttolocal('poolsnxt/'+pool,host)
+    break
+ threads['selectimport']=0
+ return
+
+ 
+def importpls(*args):
+ threads['importpls']=1
+ allinfo=get('toimport','--prefix')
+ if(len(allinfo) < 0):
+  threads['importpls']=0
+  return
+ pools={}
+ for host in allinfo:
+  if 'nothing' in host[1]:
+   continue
+  for pool in mtuple(host[1]):
+   pools[pool[0]]=[]
+ for host in allinfo:
+  if 'nothing' in host[1]:
+   continue
+  for pool in mtuple(host[1]):
+   pools[pool[0]].append((host[0].split('/')[1],pool[1],pool[2]))
+ hosts=[]
+ importedpools=['hi']
+ for pool in pools.keys():
+  hosts.append((pool,max(pools[pool],key=lambda x:x[1])[0])) 
+ for hostpair in hosts:
+  if hostpair[0] == 'nothing':
+   continue
+  owner=hostpair[1]
+################# elect the host to import the pool ###############
+  timestamp=int(datetime.datetime.now().timestamp())-5
+  locked=get('lockedpools','--prefix')
+  ownerstatus=get('cannotimport/'+owner)
+  if hostpair[0] in ownerstatus:
+   continue
+  if hostpair[0] in locked:
+   lockinfo=get('lockedpools/'+hostpair[0])
+   oldtimestamp=lockinfo[0].split('/')[1]
+   lockhost=lockinfo[0].split('/')[0]
+   lockhostip=get('leader/'+lockhost)
+   if( '-1' in str(lockhostip)):
+    lockhostip=get('known/'+lochost)
+    if('-1' in str(lockhostip)):
+     deli('lockedpools/'+pool)
+     continue
+   if int(timestamp) > int(oldtimestamp):
+    put('lockedpools/'+pool,lockhost+'/'+str(timestamp))
+    z=['/TopStor/pump.sh','ReleasePoolLock',pool]
+    msg={'req': 'ReleasePoolLock', 'reply':z}
+    sendhost(lockhostip[0], str(msg),'recvreply',myhost)
+   continue
+#importedpools.append(hostpair[0])
+  ownerip=get('leader',owner)
+  if ownerip[0]== -1:
+   ownerip=get('known',owner)
+   if str(ownerip[0])== '-1':
+    threads['importpls']=0
+    return
+  put('lockedpools/'+hostpair[0],owner+'/'+str(timestamp))
+#################### end of election
+  z=['/TopStor/pump.sh','Zpool','import','-c','/TopStordata/'+hostpair[0],'-am']
+  msg={'req': 'Zpoolimport', 'reply':z}
+  sendhost(ownerip[0][1], str(msg),'recvreply',myhost)
+  deli('toimport',hostpair[0])
+ threads['importpls']=0
+ return
+
+
 ispd.update({'tosync':tosync, 'addknown':addknown, 'runningetcdnodes':runningetcdnodes, 'trythis':trythis })
 ispd.update({'fixpool':fixpool, 'logqueue':logqueue, 'logmsg':logmsg, 'sendhost':sendhost,'etcdput':etcdput })
-ispd.update({'putzpool':putzpool, 'HostgetIPs':HostgetIPs, 'broadcastthis':broadcastthis})
-ispd.update({'etcddel':etcddel, 'etcdputlocal':etcdputlocal, 'etcddellocal':etcddellocal})
+ispd.update({'importpls':importpls, 'putzpool':putzpool, 'HostgetIPs':HostgetIPs, 'broadcastthis':broadcastthis})
+ispd.update({'addactive':addactive, 'etcddel':etcddel, 'etcdputlocal':etcdputlocal, 'etcddellocal':etcddellocal})
 ispd.update({'checkknown':checkknown, 'syncthistoleader':syncthistoleader, 'setnamespace':setnamespace})
-ispd.update({'syncthispartner':syncthispartner})
+ispd.update({'remknown':remknown, 'evacuatelocal':evacuatelocal, 'syncthispartner':syncthispartner})
+ispd.update({'selectimport':selectimport})
 
-threads.update({'tosync':0, 'addknown':0, 'runningetcdnodes':0, 'trythis':0, 'fixpool':0, 'logqueue':0})
-threads.update({'etcddel':0,'fixpool':0, 'logmsg':0, 'sendhost':0, 'etcdput':0, 'broadcastthis':0})
-threads.update({'setnamespace':0, 'etcdputlocal':0, 'etcddellocal':0, 'putzpool':0, 'HostgetIPs':0})
-threads.update({'syncthispartner':0, 'checkknown':0, 'syncthistoleader':0})
+threads.update({'importpls':0, 'addknown':0, 'runningetcdnodes':0, 'trythis':0, 'fixpool':0, 'logqueue':0})
+threads.update({'addactive':0, 'etcddel':0,'fixpool':0, 'logmsg':0, 'sendhost':0, 'etcdput':0, 'broadcastthis':0})
+threads.update({'tosync':0, 'setnamespace':0, 'etcdputlocal':0, 'etcddellocal':0, 'putzpool':0, 'HostgetIPs':0})
+threads.update({'remknown':0, 'evacuatelocal':0, 'syncthispartner':0, 'checkknown':0, 'syncthistoleader':0})
+threads.update({'selectimport':0})
 
 
 def isprimaryt(*args):
@@ -555,6 +764,24 @@ def etcdallt(*args):
 
 
 def checklocalt(*args):
+ global threads
+ global ispd
+ cmdline='rm -rf  /pacedata/checklocal'
+ result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ cmdline='mkfifo -m 660 /pacedata/checklocal'
+ result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ while True: 
+  with open('/pacedata/checklocal') as colv:
+   colvlst=colv.readlines()
+   colvlst.sort(key=lambda x:int(x.split()[0]))
+   for cmnd in colvlst:
+    cmndnm=cmnd.split()[1]
+    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
+     x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
+     x.start()
+ return
+
+
  return 
 
 def checkinitt(*args):

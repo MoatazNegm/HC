@@ -410,7 +410,7 @@ basetime=$newtime
       echo $known | grep $myhost  >/dev/null
       if [ $? -ne 0 ];
       then
-       echo $ostamp checkknown $myhost $myip  > /pacedata/isprimary & 
+       echo $ostamp checkknown $myip  > /pacedata/isprimary & 
        ostamp=$((ostamp+1))
 newtime=`date +%s`
 echo iamnotaknown $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
@@ -482,7 +482,8 @@ basetime=$newtime
   echo $perfmon | grep 1 >/dev/null
   if [ $? -eq 0 ];
   then
-    /TopStor/queuethis.sh AmIprimary stop system 
+   echo $ostamp logqueue AmIprimary stop system  > /pacedata/etcdall & 
+   ostamp=$((ostamp+1))
   fi
 newtime=`date +%s`
 echo running putzpool 3 $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
@@ -490,15 +491,11 @@ basetime=$newtime
   echo $lsscsiflag | grep putzpool
   if [ $? -eq 0 ];
   then
-   pgrep putzpool 
-   if [ $? -ne 0 ];
-   then
-    echo $ostamp  putzpool $stamp no3 $isprimary $primtostd > /pacedata/putzpool & 
-    ostamp=$((ostamp+1))
-    echo $ostamp  HostgetIPs $stamp no3 $isprimary $primtostd > /pacedata/putzpool & 
-    ostamp=$((ostamp+1))
-    lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
-   fi
+   echo $ostamp  putzpool $stamp no3 $isprimary $primtostd > /pacedata/putzpool & 
+   ostamp=$((ostamp+1))
+   echo $ostamp  HostgetIPs $stamp no3 $isprimary $primtostd > /pacedata/putzpool & 
+   ostamp=$((ostamp+1))
+   lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
   fi
   echo checking if I need to run local etcd >> /root/zfspingtmp
 newtime=`date +%s`
@@ -507,7 +504,8 @@ basetime=$newtime
   echo checking if I need to run local etcd 
   if [ $needlocal -eq 1 ];
   then
-   /TopStor/queuethis.sh IamLocal start system 
+   echo $ostamp logqueue IamLocal start  system  > /pacedata/etcdall & 
+   ostamp=$((ostamp+1))
    echo start the local etcd >> /root/zfspingtmp
 newtime=`date +%s`
 echo starttheocal $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
@@ -532,12 +530,14 @@ basetime=$newtime
     leaderall=` ./etcdget.py leader --prefix `
     leader=`echo $leaderall | awk -F'/' '{print $2}' | awk -F"'" '{print $1}'`
     leaderip=`echo $leaderall | awk -F"')" '{print $1}' | awk -F", '" '{print $2}'`
-    ./etcdsync.py $myip primary primary >/dev/null 
-    ./etcddellocal.py $myip known --prefix >/dev/null 
-    ./etcddellocal.py $myip localrun --prefix >/dev/null 
-    ./etcddellocal.py $myip run --prefix >/dev/null 
-    ./etcdsync.py $myip known known >/dev/null 
-    ./etcdsync.py $myip localrun localrun >/dev/null 
+    echo $ostamp etcddellocal $myip known --prefix  > /pacedata/etcdall & 
+    ostamp=$((ostamp+1))
+    echo $ostamp etcddellocal $myip localrun --prefix  > /pacedata/etcdall & 
+    ostamp=$((ostamp+1))
+    echo $ostamp etcddellocal $myip run --prefix  > /pacedata/etcdall & 
+    ostamp=$((ostamp+1))
+    echo $ostamp syncthispartner $myip primary known localrun > /pacedata/etcdall & 
+    ostamp=$((ostamp+1))
     ./etcdsync.py $myip leader known >/dev/null 
     echo done and exit >> /root/zfspingtmp
 newtime=`date +%s`
@@ -546,7 +546,8 @@ basetime=$newtime
     echo done and exit 
     echo $perfmon | grep 1 >/dev/null
     if [ $? -eq 0 ]; then
-      /TopStor/queuethis.sh IamLocal stop system 
+     echo $ostamp logqueue IamLocal stop  system  > /pacedata/etcdall & 
+     ostamp=$((ostamp+1))
     fi
     continue 
   fi
@@ -583,12 +584,8 @@ newtime=`date +%s`
 echo nosocheckingevacuation $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
   echo No then Checking Node Evacuation
-  pgrep Evacuatelocal
-  if [ $? -ne 0 ];
-  then
-    /TopStor/Evacuatelocal.py >/dev/null
-    cd /pace
-  fi
+  echo $ostamp evacuatelocal  $myhost $myip  > /pacedata/checklocal & 
+  ostamp=$((ostamp+1))
   echo Checking  I am primary >> /root/zfspingtmp
 newtime=`date +%s`
 echo checkprimary $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
@@ -601,27 +598,18 @@ newtime=`date +%s`
 echo YesIamprimary $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
     echo Yes I am primary so will check for known hosts
-    pgrep  remknown 
-    if [ $? -ne 0 ];
-    then
-      ./remknown.py $myhost >/dev/null  
-    fi
+    echo $ostamp remknown  $myhost $myip  > /pacedata/checklocal & 
+    ostamp=$((ostamp+1))
 newtime=`date +%s`
 echo finished remknown $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
-    pgrep  addknown 
-    if [ $? -ne 0 ];
-    then
-      ./addknown.py $myhost >/dev/null  
-    fi
+    echo $ostamp addknown $myhost $myip  > /pacedata/checklocal & 
+    ostamp=$((ostamp+1))
 newtime=`date +%s`
 echo finished addknown $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
-    pgrep addactive 
-    if [ $? -ne 0 ];
-    then
-      ./addactive.py $myhost >/dev/null  
-    fi
+    echo $ostamp addactive $myhost $myip  > /pacedata/checklocal & 
+    ostamp=$((ostamp+1))
 newtime=`date +%s`
 echo finished addactive $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
