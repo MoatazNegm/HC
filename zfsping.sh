@@ -25,6 +25,7 @@ clockdiff=0
 date=`date`
 enpdev='enp0s8'
 echo $date >> /root/zfspingstart
+pkill collective
 /pace/collective.py &
 systemctl restart target >/dev/null
 cd /pace
@@ -53,7 +54,7 @@ ostamp=0
 while true;
 do
  lsscsi=`lsscsi | wc -c`'lsscsi' >/dev/null
- echo $lsscsi | grep $oldsscsi
+ echo $lsscsi | grep $oldlsscsi
  if [ $? -eq 0 ];
  then
   lsscsiflag='zpooltoimport'
@@ -72,8 +73,7 @@ origtime=$newtime
   echo $perfmon | grep 1 >/dev/null
   if [ $? -eq 0 ];
   then
-   stamp=`date +%s`
-   echo $ostamp logqueue AmIprimary start system $stamp > /pacedata/isprimary & 
+   echo $ostamp logqueue AmIprimary start system > /pacedata/etcdall & 
    ostamp=$((ostamp+1))
   fi
   echo check if I primary etcd >> /root/zfspingtmp
@@ -99,7 +99,7 @@ basetime=$newtime
     fi
     if [ $primtostd -eq 3 ];
     then
-     echo $ostamp logmsg Partsu05 info system $myhost > /pacedata/isprimary & 
+     echo $ostamp logmsgthis Partsu05 info system $myhost > /pacedata/etcdall & 
      ostamp=$((ostamp+1))
      primtostd=$((primtostd+1))
     fi
@@ -110,30 +110,25 @@ newtime=`date +%s`
 echo sendinginfo  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
       echo for $isprimary sending info Partsu03 booted with ip
-      echo $ostamp  etcdput ready/$myhost $myip > /pacedata/isprimary & 
+      echo $ostamp  etcdput ready/$myhost $myip > /pacedata/etcdall & 
       ostamp=$((ostamp+1))
-      echo $ostamp  etcdput ActivePartners/$myhost $myip > /pacedata/isprimary & 
+      echo $ostamp  etcdput ActivePartners/$myhost $myip > /pacedata/etcdall & 
       ostamp=$((ostamp+1))
       partnersync=0
-      echo $ostamp  broadcastthis SyncHosts /TopStor/pump.sh addhost.py > /pacedata/isprimary & 
+      echo $ostamp  broadcastthis SyncHosts /TopStor/pump.sh addhost.py > /pacedata/etcdall & 
       ostamp=$((ostamp+1))
       touch /pacedata/addiscsitargets 
-      echo $ostamp  etcddel toimport/$myhost > /pacedata/isprimary & 
+      echo $ostamp  etcddel toimport/$myhost > /pacedata/etcdall & 
       ostamp=$((ostamp+1))
       toimport=2
       echo $lsscsiflag | grep putzpool
       if [ $? -eq 0 ];
       then
-       pgrep putzpool 
-       if [ $? -ne 0 ];
-       then
-         stamp=`date +%s`
-         echo $ostamp  putzpool $stamp no1 $isprimary $primtostd > /pacedata/putzpool & 
-         ostamp=$((ostamp+1))
-         /pace/putzpool.py 1 $isprimary $primtostd  >/dev/null 
-         /TopStor/HostgetIPs >/dev/null
-         lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
-       fi
+       echo $ostamp  putzpool $stamp no1 $isprimary $primtostd > /pacedata/putzpool & 
+       ostamp=$((ostamp+1))
+       echo $ostamp  HostgetIPs $stamp no1 $isprimary $primtostd > /pacedata/putzpool & 
+       ostamp=$((ostamp+1))
+       lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
       fi
     fi
     runningcluster=1
@@ -148,7 +143,8 @@ basetime=$newtime
       echo $perfmon | grep 1 >/dev/null
       if [ $? -eq 0 ];
       then
-        /TopStor/queuethis.sh FixIamleader start system 
+       echo $ostamp logqueue FixIamleader start system > /pacedata/etcdall & 
+       ostamp=$((ostamp+1))
       fi
       echo no leader although I am primary node >> /root/zfspingtmp
 newtime=`date +%s`
@@ -156,12 +152,15 @@ echo noleaderalthough  $((newtime-basetime)) total=$((newtime-origtime))>> /root
 basetime=$newtime
       echo no leader although I am primary node 
       ./runningetcdnodes.py $myip >/dev/null
-      ./etcddel.py leader --prefix >/dev/null 
-      ./etcdput.py leader/$myhost $myip >/dev/null 
+      echo $ostamp  etcddel leader --prefix > /pacedata/etcdall &
+      ostamp=$((ostamp+1))
+      echo $ostamp  etcdput leader/$myhost $myip  > /pacedata/etcdall & 
+      ostamp=$((ostamp+1))
       echo $perfmon | grep 1 >/dev/null
       if [ $? -eq 0 ];
       then
-        /TopStor/queuethis.sh FixIamleader stop system >/dev/null 
+       echo $ostamp logqueue FixIamleader stop system  > /pacedata/etcdall & 
+       ostamp=$((ostamp+1))
       fi
     fi
     echo adding known from list of possbiles >> /root/zfspingtmp
@@ -169,62 +168,26 @@ newtime=`date +%s`
 echo addingknown  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
     echo adding known from list of possbiles 
-    pgrep  addknown 
-    if [ $? -ne 0 ];
+    echo $perfmon | grep 1 >/dev/null
+    if [ $? -eq 0 ];
     then
-      echo $perfmon | grep 1 >/dev/null
-      if [ $? -eq 0 ];
-      then
-        /TopStor/queuethis.sh addingknown start system 
-      fi
-      ./addknown.py >/dev/null  
-      echo $perfmon | grep 1
-      if [ $? -eq 0 ];
-      then
-        /TopStor/queuethis.sh addingknown stop system 
-      fi 
+     echo $ostamp logqueue addingknown start system  > /pacedata/etcdall & 
+     ostamp=$((ostamp+1))
     fi
+    echo $ostamp addknown $myhost $myip  > /pacedata/isprimary & 
+    ostamp=$((ostamp+1))
+    echo $ostamp logqueue addingknown stop system  > /pacedata/etcdall & 
+    ostamp=$((ostamp+1))
     echo checking if there are partners to sync >> /root/zfspingtmp
 newtime=`date +%s`
 echo checingifpartnertosync  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
     echo checking if there are partners to sync
-    tosync=`ETCDCTL_API=3 /pace/etcdget.py tosync --prefix | wc -l `
-    if [ $tosync -gt 0 ];
-    then
-      ETCDCTL_API=3 /pace/etcddel.py tosync --prefix >/dev/null
-      echo syncthing with the ready to sync partners >> /root/zfspingtmp
+    echo $ostamp tosync ready pools volumes ActivePartners allowedPartners frstnode  > /pacedata/isprimary & 
+    ostamp=$((ostamp+1))
 newtime=`date +%s`
-echo synthingwithreadypartners  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+echo aftertosync  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
-      echo syncthing with the ready to sync partners 
-      ./syncthis.py ready --prefix  >/dev/null
-      ./syncthis.py pools/ --prefix >/dev/null
-      ./syncthis.py volumes/ --prefix >/dev/null 
-      ./syncthis.py ActivePartners --prefix /dev/null 
-      ./syncthis.py allowedPartners --prefix /dev/null 
-      ./syncthis.py frstnode --prefix /dev/null 
-    else
-      readycount=`ETCDCTL_API=3 /pace/etcdget.py ready --prefix | wc -l` 
-      lostcount=`ETCDCTL_API=3 /pace/etcdget.py lost --prefix | wc -l` 
-      totalin=$((readycount+lostcount))
-      ActivePartners=`ETCDCTL_API=3 /pace/etcdget.py ActivePartners --prefix | wc -l` 
-      if [ $totalin -eq $ActivePartners ];
-      then  
-        echo All running partners are ready and in sync >> /root/zfspingtmp
-newtime=`date +%s`
-echo allrunningpartners  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
-basetime=$newtime
-        echo All running partners are ready and in sync 
-      else
-        echo some partners are not in sync >> /root/zfspingtmp
-newtime=`date +%s`
-echo someprtnersnotinsync $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
-basetime=$newtime
-        echo some partners are not in sync
-        ./etcdput.py tosync yes
-      fi
-    fi
   else
     echo I am not a primary etcd.. heartbeating leader >> /root/zfspingtmp
 newtime=`date +%s`
@@ -244,7 +207,8 @@ basetime=$newtime
       ./etcdgetlocal.py $myip known --prefix | wc -l | grep 1
       if [ $? -eq 0 ];
       then
-        /TopStor/logmsg.py Partst05 info system $myhost >/dev/null 
+       echo $ostamp logmsgthis Partst05 info system $myhost > /pacedata/etcdall & 
+       ostamp=$((ostamp+1))
         primtostd=0;
       fi
       nextleadip=`ETCDCTL_API=3 ./etcdgetlocal.py $myip nextlead` 
@@ -259,7 +223,8 @@ basetime=$newtime
       then
         echo $perfmon | grep 1 >/dev/null
         if [ $? -eq 0 ]; then
-          /TopStor/queuethis.sh AddingMePrimary start system 
+         echo $ostamp logqueue AddingMePrimary start system > /pacedata/etcdall & 
+         ostamp=$((ostamp+1))
         fi
         echo hostlostlocal getting all my pools from $leadername >> /root/zfspingtmp
 newtime=`date +%s`
@@ -297,19 +262,25 @@ basetime=$newtime
         cp /TopStor/chrony.conf /etc/
         sed -i '/MASTERSERVER/,+1 d' /etc/chrony.conf
         ./runningetcdnodes.py $myip >/dev/null
-        ./etcddel.py leader >/dev/null 
-        ./etcdput.py leader/$myhost $myip >/dev/null 
-        ./etcddel.py ready --prefix >/dev/null 
-        ./etcdput.py ready/$myhost $myip >/dev/null 
-        ./etcdput.py tosync/$myhost $myip >/dev/null 
-        /TopStor/logmsg.py Partst02 warning system $leaderall 
+        echo $ostamp etcddel leader --prefix > /pacedata/etcdall & 
+        ostamp=$((ostamp+1))
+        echo $ostamp etcdput leader/$myhost $myip > /pacedata/etcdall & 
+        ostamp=$((ostamp+1))
+        echo $ostamp etcddel ready --prefix > /pacedata/etcdall & 
+        ostamp=$((ostamp+1))
+        echo $ostamp etcdput ready/$myhost $myip > /pacedata/etcdall & 
+        ostamp=$((ostamp+1))
+        echo $ostamp etcdput tosync/$myhost yes > /pacedata/etcdall & 
+        ostamp=$((ostamp+1))
+        echo $ostamp logmsgthis Partst02 warning system $leaderall > /pacedata/etcdall & 
+        ostamp=$((ostamp+1))
         echo creating namespaces >>/root/zfspingtmp
 newtime=`date +%s`
 echo creatingnamespaces $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
         echo creating namespaces 
-        ./setnamespace.py $enpdev >/dev/null 
-        ./setdataip.py >/dev/null 
+        echo $ostamp setnamespace $enpdev > /pacedata/isprimary & 
+        ostamp=$((ostamp+1))
         echo created namespaces >>/root/zfspingtmp
 newtime=`date +%s`
 echo creatednamespaces $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
@@ -317,7 +288,8 @@ basetime=$newtime
         echo created namespaces 
         echo importing all pools >> /root/zfspingtmp
         echo importing all pools
-        ./etcddel.py toimport/$myhost >/dev/null 
+        echo $ostamp etcddel toimport/$myhost --prefix > /pacedata/etcdall & 
+        ostamp=$((ostamp+1))
         toimport=1
         echo running putzpool and nfs >> /root/zfspingtmp
 newtime=`date +%s`
@@ -327,13 +299,11 @@ basetime=$newtime
         echo $lsscsiflag | grep putzpool
         if [ $? -eq 0 ];
         then
-         pgrep putzpool 
-         if [ $? -ne 0 ];
-         then
-          /pace/putzpool.py 2 $isprimary $primtostd  >/dev/null 
-          /TopStor/HostgetIPs >/dev/null
-          lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
-         fi
+         echo $ostamp  putzpool $stamp no2 $isprimary $primtostd > /pacedata/putzpool & 
+         ostamp=$((ostamp+1))
+         echo $ostamp  HostgetIPs $stamp no2 $isprimary $primtostd > /pacedata/putzpool & 
+         ostamp=$((ostamp+1))
+         lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
         fi
         chgrp apache /var/www/html/des20/Data/* >/dev/null
         chmod g+r /var/www/html/des20/Data/* >/dev/null
@@ -342,7 +312,8 @@ basetime=$newtime
         echo $perfmon | grep 1 >/dev/null
         if [ $? -eq 0 ];
         then
-          /TopStor/queuethis.sh AddinMePrimary stop system 
+         echo $ostamp logqueue AddingMePrimary stop system > /pacedata/etcdall & 
+         ostamp=$((ostamp+1))
         fi
       else
         ETCDCTL_API=3 /pace/hostlostlocal.sh $leadername $myip $leaderip >/dev/null
@@ -370,7 +341,8 @@ basetime=$newtime
             echo $perfmon | grep 1 >/dev/null
             if [ $? -eq 0 ];
             then
-              /TopStor/queuethis.sh AddingtoOtherleader start system 
+             echo $ostamp logqueue AddingtoOtherleader start system > /pacedata/etcdall & 
+             ostamp=$((ostamp+1))
             fi
             echo found the new leader run $result >> /root/zfspingtmp
 newtime=`date +%s`
@@ -378,12 +350,17 @@ echo foundthenewleader $((newtime-basetime)) total=$((newtime-origtime))>> /root
 basetime=$newtime
             echo found the new leader run $result
             waiting=0
-            /pace/syncthtistoleader.py $myip pools/ $myhost >/dev/null
-            /pace/syncthtistoleader.py $myip volumes/ $myhost >/dev/null
-            /pace/etcdput.py ready/$myhost $myip /dev/null
-            /pace/etcdput.py tosync/$myhost $myip /dev/null
-            /TopStor/broadcast.py SyncHosts /TopStor/pump.sh addhost.py  /dev/null
-            leaderall=` ./etcdget.py leader --prefix `
+            echo $ostamp syncthtistoleader $myip pools/ $myhost > /pacedata/etcdall & 
+            ostamp=$((ostamp+1))
+            echo $ostamp syncthtistoleader $myip volumes/ $myhost > /pacedata/etcdall & 
+            ostamp=$((ostamp+1))
+            echo $ostamp etcdput ready/$myhost $myip > /pacedata/etcdall & 
+            ostamp=$((ostamp+1))
+            echo $ostamp tosync tosync/$myhost $myip > /pacedata/etcdall & 
+            ostamp=$((ostamp+1))
+            echo $ostamp  broadcastthis SyncHosts /TopStor/pump.sh addhost.py > /pacedata/etcdall & 
+            ostamp=$((ostamp+1))
+            leaderall=`./etcdget.py leader --prefix `
             leader=`echo $leaderall | awk -F'/' '{print $2}' | awk -F"'" '{print $1}'`
             leaderip=` ./etcdget.py leader/$leader `
             rm -rf /etc/chrony.conf
@@ -393,7 +370,8 @@ basetime=$newtime
             echo $perfmon | grep 1 /dev/null
             if [ $? -eq 0 ];
 	    then
-              /TopStor/queuethis.sh AddingtoOtherleader start system 
+             echo $ostamp logqueue AddingtoOtherleader stop system > /pacedata/etcdall & 
+             ostamp=$((ostamp+1))
             fi
           fi
         done 
@@ -429,32 +407,20 @@ echo checkingifiam $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfs
 basetime=$newtime
       echo checking if I am known host
       known=` ./etcdget.py known --prefix 2>/dev/null`
-      myconfig=` ./etcdgetlocal.py $myip configured 2>/dev/null`
       echo $known | grep $myhost  >/dev/null
       if [ $? -ne 0 ];
       then
-        echo $myconfig | grep yes  >/dev/null
-        if [ $? -ne 0 ];
-        then
-          echo I am not a known and I am not configured. So, adding me as possible >> /root/zfspingtmp
+       echo $ostamp checkknown $myhost $myip  > /pacedata/isprimary & 
+       ostamp=$((ostamp+1))
 newtime=`date +%s`
-echo iamnotaknownnotconfigured $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
+echo iamnotaknown $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
-          echo I am not a known and I am not configured. So, adding me as possible
-          ./etcdput.py possible$myhost $myip  
-        else
-          echo I am not a known but I am configured so need to activate >> /root/zfspingtmp
-newtime=`date +%s`
-echo iamnotaknownbutconfigured $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
-basetime=$newtime
-          echo I am not a known but I am configured so need to activate
-          ./etcdput.py toactivate$myhost $myip  
-        fi 
       else
         echo $perfmon | grep 1 >/dev/null
         if [ $? -eq 0 ];
         then
-          /TopStor/queuethis.sh iamkknown start system 
+         echo $ostamp logqueue Iamknown start system  > /pacedata/etcdall & 
+         ostamp=$((ostamp+1))
         fi
         echo I am known so running all needed etcd task:boradcast,isknown:$isknown >> /root/zfspingtmp
 newtime=`date +%s`
@@ -471,11 +437,10 @@ basetime=$newtime
           leaderall=` ./etcdget.py leader --prefix `
           leader=`echo $leaderall | awk -F'/' '{print $2}' | awk -F"'" '{print $1}'`
           leaderip=`echo $leaderall | awk -F"')" '{print $1}' | awk -F", '" '{print $2}'`
-          /pace/etcdsync.py $myip pools pools >/dev/null
-          /pace/etcdsync.py $myip poolsnxt poolsnxt >/dev/null
-          /pace/etcdsync.py $myip nextlead nextlead >/dev/null
-          /pace/sendhost.py $leaderip 'logall' 'recvreq' $myhost  >/dev/null 
-          isknown=$((isknown+1))
+          echo $ostamp syncthispartner $myip pools poolsnxt nextlead  > /pacedata/etcdall & 
+          ostamp=$((ostamp+1))
+          echo $ostamp sendhost $leaderip 'logall' 'recvreq' $myhost > /pacedata/etcdall & 
+          ostamp=$((ostamp+1))
 newtime=`date +%s`
 echo finishrunning sendhost  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
@@ -489,11 +454,15 @@ basetime=$newtime
 newtime=`date +%s`
 echo isknowneq3  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
-          /pace/etcdput.py ready/$myhost $myip 
-          /pace/etcdput.py ActivePartners/$myhost $myip 
-          /TopStor/broadcast.py SyncHosts /TopStor/pump.sh addhost.py >/dev/null
+          echo $ostamp etcdput ready/$myhost $myip > /pacedata/etcdall & 
+          ostamp=$((ostamp+1))
+          echo $ostamp tosync ActivePartners/$myhost $myip > /pacedata/etcdall & 
+          ostamp=$((ostamp+1))
+          echo $ostamp  broadcastthis SyncHosts /TopStor/pump.sh addhost.py > /pacedata/etcdall & 
+          ostamp=$((ostamp+1))
           touch /pacedata/addiscsitargets 
-          ./etcddel.py toimport/$myhost >/dev/null 
+          echo $ostamp etcddel toimport/$myhost --prefix > /pacedata/etcdall & 
+          ostamp=$((ostamp+1))
           toimport=1
         fi
         echo finish running tasks task:boradcast, log..etc >> /root/zfspingtmp
@@ -504,7 +473,8 @@ basetime=$newtime
         echo $perfmon | grep 1 >/dev/null
         if [ $? -eq 0 ];
         then
-          /TopStor/queuethis.sh iamkknown stop system 
+         echo $ostamp logqueue Iamknown stop system  > /pacedata/etcdall & 
+         ostamp=$((ostamp+1))
         fi
       fi
     fi
@@ -523,8 +493,10 @@ basetime=$newtime
    pgrep putzpool 
    if [ $? -ne 0 ];
    then
-    /pace/putzpool.py 3 $isprimary $primtostd > /dev/null 
-    /TopStor/HostgetIPs	>/dev/null 
+    echo $ostamp  putzpool $stamp no3 $isprimary $primtostd > /pacedata/putzpool & 
+    ostamp=$((ostamp+1))
+    echo $ostamp  HostgetIPs $stamp no3 $isprimary $primtostd > /pacedata/putzpool & 
+    ostamp=$((ostamp+1))
     lsscsiflag=`echo $lsscsiflag | sed 's/putzpool/init/g'`
    fi
   fi
@@ -535,12 +507,8 @@ basetime=$newtime
   echo checking if I need to run local etcd 
   if [ $needlocal -eq 1 ];
   then
-    echo $perfmon | grep 1 >/dev/null
-    if [ $? -eq 0 ];
-    then
-      /TopStor/queuethis.sh IamLocal start system 
-    fi
-    echo start the local etcd >> /root/zfspingtmp
+   /TopStor/queuethis.sh IamLocal start system 
+   echo start the local etcd >> /root/zfspingtmp
 newtime=`date +%s`
 echo starttheocal $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime

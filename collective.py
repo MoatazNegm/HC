@@ -1,27 +1,30 @@
 #!/bin/python3.6
-import subprocess, socket, binascii, pika 
-from threading import Thread, enumerate
+import subprocess, socket, binascii, pika, sys
+from threading import Thread
 from threading import enumerate as tenumerate
 from etcdput import etcdput as put
 from etcdget import etcdget as get 
 from etcddel import etcddel as deli 
+from etcddellocal import etcddel as delilocal
 from broadcast import broadcast as broadcast 
 from os import listdir
-from os import remove 
 from datetime import datetime
 from poolall import getall as getall
 from os.path import getmtime
-import sys
 import logmsg
+from broadcasttolocal import broadcasttolocal as broadcasttolocal
+from etcdgetlocal import etcdget as getlocal
+from etcdputlocal import etcdput as putlocal 
+
 
 threads={}
+ispd={}
 
 def putzpool(*args):
  threads['putzpool']=1
- stamp=int(datetime.now().timestamp())
- cmdline='cat /pacedata/perfmon'
- perfmon=str(subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout)
+ perfmon=get('perfmon')
  if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
   logqueue('putzpool.py','start','system',stamp)
  sitechange=0
  readyhosts=get('ready','--prefix')
@@ -206,11 +209,13 @@ def putzpool(*args):
  for y in xnew:
   put(y[0],y[1])
  if '1' in perfmon: 
+  stamp=int(datetime.now().timestamp())
   logqueue('putzpool.py','stop','system',stamp)
  threads['putzpool']=0
  return
  
 def fixpool(*args):
+ threads['fixpool']=1
  pools=get('fixpool','--prefix')
  for p in pools:
   pool=p[0].replace('fixpool/','')
@@ -218,6 +223,33 @@ def fixpool(*args):
   if myhost==host:
    cmdline='/TopStor/fixpool.sh '+pool
    result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE) 
+ threads['fixpool']=0
+ return
+
+def syncthispartner(*args):
+ thehost=args[0]
+ for key in args[1:]:
+  mylist=get(key,'--prefix')
+  dellocal(thehost,key,'--prefix')
+  for item in mylist:
+   moditem=""
+   restitem=""
+   keysplit=item[0].split(key)
+   if len(keysplit) > 1:
+    restitem=keysplit[1]
+   putlocal(thehost, key+restitem, item[1])
+ return
+
+def syncpartners(*args):
+ knowns=[]
+ knowninfo=get('known','--prefix')
+ print('knwon',knowninfo)
+ for k in knowninfo:
+  for arg in args:
+   delilocal(k[1],arg,'--prefix')
+   etcdinfo=get(arg,'--prefix')
+   for item in etcdinfo:
+    putlocal(k[1],item[0],item[1])
  return
 
 def syncthispool(*args):
@@ -270,8 +302,8 @@ def sendhost(host, req, que, frmhst, port=5672):
 def logqueue(*args):
  z=[]
  knowns=[]
- dt=datetime.datetime.now().strftime("%m/%d/%Y")
- tm=datetime.datetime.now().strftime("%H:%M:%S")
+ dt=datetime.now().strftime("%m/%d/%Y")
+ tm=datetime.now().strftime("%H:%M:%S")
  z=['/TopStor/logqueue2.sh', dt, tm, myhost ]
  for arg in args:
   z.append(arg)
@@ -287,32 +319,20 @@ def logqueue(*args):
   knowns.append(k[1])
  return
 
-def logmsg(*args):
- z=[]
- knowns=[]
- dt=datetime.datetime.now().strftime("%m/%d/%Y")
- tm=datetime.datetime.now().strftime("%H:%M:%S")
- z=['/TopStor/logmsg2.sh', dt, tm, myhost ]
- for arg in args:
-  z.append(arg)
- print('z=',z)
- leaderinfo=get('leader','--prefix')
- knowninfo=get('known','--prefix')
- leaderip=leaderinfo[0][1]
- for k in knowninfo:
-  knowns.append(k[1])
- print('leader',leaderip) 
- print('knowns',knowns) 
- msg={'req': 'msg2', 'reply':z}
- print('sending', leaderip, str(msg),'recevreply',myhost)
- sendhost(leaderip, str(msg),'recvreply',myhost)
- for k in knowninfo:
-  sendhost(k[1], str(msg),'recvreply',myhost)
-  knowns.append(k[1])
+def logmsgthis(*args):
+ logmsg.sendlog(*args)
  return
 
 def etcdput(*args):
  put(*args)
+ return
+
+def etcdputlocal(*args):
+ putlocal(*args)
+ return
+
+def etcddellocal(*args):
+ delilocal(*args)
  return
 
 def etcddel(*args):
@@ -323,12 +343,147 @@ def broadcastthis(*args):
  broadcast(*args)
  return
 
+def HostgetIPs(*args):
+ threads['HostgetIPs']=1
+ cmdline='/TopStor/HostgetIPs'
+ result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ threads['HostgetIPs']=0
+ return
+
+def runningetcdnodes(*args):
+ threads['runningetcdnodes']=1
+ ip=args[0]
+ cmdline=['etcdctl','-w','json','--endpoints='+ip+':2379','member','list']
+ result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+ serverstatus=result.stdout
+ serverstatus=str(serverstatus)[2:]
+ serverstatus=serverstatus[:-3]
+ etcdfile=open('/pacedata/runningetcdnodes.txt','w')
+ etcdfile.write(serverstatus)
+ etcdfile.close()
+ etcdfile=open('/var/www/html/des20/Data/runningetcdnodes.txt','w')
+ etcdfile.write(serverstatus)
+ etcdfile.close()
+ threads['runningetcdnodes']=0
+ return
+
+def addknown(*args):
+ threads['addknown']=1
+ allow=get('allowedPartners')
+ if 'notallowed' in str(allow):
+  threads['addknown']=0
+  return
+ perfmon=get('perfmon')
+ if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
+  logqueue('addknown.py','start','system',stamp)
+ possible=get('possible','--prefix')
+ if possible != []:
+  for x in possible:
+   if 'yestoall' not in str(allow):
+    if x[0].replace('possible','') not in str(allow):
+     Active=get('AcivePartners','--prefix')
+     if x[0].replace('possible','') not in str(Active):
+      threads['addknown']=0
+      return 
+   knowns=get('known','--prefix')
+   putlocal(x[1],'configured','yes')
+   frstnode=get('frstnode')
+   if x[0].replace('possible','') not in frstnode[0]:
+    newfrstnode=frstnode[0]+'/'+x[0].replace('possible','')
+    put('frstnode',newfrstnode)
+   put('known/'+x[0].replace('possible',''),x[1])
+   put('ActivePartners/'+x[0].replace('possible',''),x[1])
+   broadcasttolocal('ActivePartners/'+x[0].replace('possible',''),x[1])
+   put('nextlead',x[0].replace('possible','')+'/'+x[1])
+   cmdline=['/sbin/rabbitmqctl','add_user','rabb_'+x[0].replace('possible',''),'YousefNadody']
+   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+   cmdline=['/sbin/rabbitmqctl','set_permissions','-p','/','rabb_'+x[0].replace('possible',''),'.*','.*','.*']
+   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+   deli('losthost/'+x[0].replace('possible',''))
+   put('change/'+x[0].replace('possible','')+'/booted',x[1])
+   put('tosync','yes')
+   broadcast('broadcast','/TopStor/pump.sh','syncnext.sh','nextlead','nextlead')
+   if x[0].replace('possible','') in str(knowns):
+    put('allowedPartners','notoall')
+    deli('possible',x[0])
+    logmsg.sendlog('AddHostsu01','info',arg[-1],name)
+    if '1' in perfmon:
+     stamp=int(datetime.now().timestamp())
+     logqueue('AddHost.py','finished',args[-1],stamp)
+ if '1' in perfmon:
+  stamp=int(datetime.now().timestamp())
+  logqueue('addknown.py','stop','system',stamp)
+ return
+
+def tosync(*args):
+ threads['tosync']=1
+ totalen=len(get('ready','--prefix'))+len(get('lost','--prefix'))
+ apcount=len(get('ActivePartners','--prefix'))
+ if totalen != apcount:
+  print('total',totalen,apcount)
+  put('tosync','yes')
+ tos=get('tosync','--prefix')
+ if 'yes' in str(tos):
+  deli('tosync','--prefix')
+  syncpartners(*args)
+ threads['tosync']=0
+ return
+
+def setnamespace(*args):
+ threads['setnamespace']=1
+ nslist=get('namespace','--prefix')
+ if 'mgmtip' not in str(nslist):
+  put('namespace/mgmtip','192.168.43.7/24')
+  nslist=get('namespace','--prefix')
+ ns=(x for x in nslist)
+ for arg in args:
+  try: 
+   nsn=next(ns)
+  except: 
+   threads['setnamespace']=0
+   return
+  cmdline='/sbin/pcs resource create '+nsn[0].replace('namespace/','')+' ocf:heartbeat:IPaddr2 nic='+arg+' ip='+nsn[1].split('/')[0]+' cidr_netmask='+nsn[1].split('/')[1]+' op monitor on-fail=restart'
+  subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+  cmdline='/sbin/pcs resource group add namespaces '+nsn[0].replace('namespace/','')
+  subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ threads['setnamespace']=0
+ return
+
+def syncthistoleader(*args):
+ leaderip=get('leader','--prefix')[0][1]
+ deli(args[1],args[2])
+ etcdinfo=getlocal(args[0],args[1],args[2])
+ for item in etcdinfo:
+   put(item[0],item[1])
+ return
+
+def checkknown(*args):
+ myhost=args[0]
+ myip=args[1]
+ myconfig=getlocal(myip,'configured')
+ if 'yes' in str(myconfig):
+  put('possible'+myhost,myip)
+ else:
+  put('toactivate'+myhost,myip)
+ return 
+
+ispd.update({'tosync':tosync, 'addknown':addknown, 'runningetcdnodes':runningetcdnodes, 'trythis':trythis })
+ispd.update({'fixpool':fixpool, 'logqueue':logqueue, 'logmsg':logmsg, 'sendhost':sendhost,'etcdput':etcdput })
+ispd.update({'putzpool':putzpool, 'HostgetIPs':HostgetIPs, 'broadcastthis':broadcastthis})
+ispd.update({'etcddel':etcddel, 'etcdputlocal':etcdputlocal, 'etcddellocal':etcddellocal})
+ispd.update({'checkknown':checkknown, 'syncthistoleader':syncthistoleader, 'setnamespace':setnamespace})
+ispd.update({'syncthispartner':syncthispartner})
+
+threads.update({'tosync':0, 'addknown':0, 'runningetcdnodes':0, 'trythis':0, 'fixpool':0, 'logqueue':0})
+threads.update({'etcddel':0,'fixpool':0, 'logmsg':0, 'sendhost':0, 'etcdput':0, 'broadcastthis':0})
+threads.update({'setnamespace':0, 'etcdputlocal':0, 'etcddellocal':0, 'putzpool':0, 'HostgetIPs':0})
+threads.update({'syncthispartner':0, 'checkknown':0, 'syncthistoleader':0})
+
+
 def isprimaryt(*args):
  global threads
- ispd={'trythis':trythis, 'fixpool':fixpool, 'logqueue':logqueue, 'logmsg':logmsg, 'sendhost':sendhost, \
-  'etcdput':etcdput, 'broadcastthis':broadcastthis}
- threads.update({'trythis':0, 'fixpool':0, 'logqueue':0, 'logmsg':0, 'sendhost':0, \
-  'etcdput':0, 'broadcastthis':0})
+ global ispd
  cmdline='rm -rf  /pacedata/isprimary'
  result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
  cmdline='mkfifo -m 660 /pacedata/isprimary'
@@ -339,14 +494,13 @@ def isprimaryt(*args):
    colvlst.sort(key=lambda x:int(x.split()[0]))
    for cmnd in colvlst:
     cmndnm=cmnd.split()[1]
-    if cmndnm in ispd.keys() and threads[cmndnm]==0:
+    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
      x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
      x.start()
 
 def fixpoolt(*args):
  global threads
- ispd={'fixpool':fixpool}
- threads['fixpool']=0
+ global ispd
  cmdline='rm -rf  /pacedata/fixpool'
  result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
  cmdline='mkfifo -m 660 /pacedata/fixpool'
@@ -357,15 +511,15 @@ def fixpoolt(*args):
    colvlst.sort(key=lambda x:int(x.split()[0]))
    for cmnd in colvlst:
     cmndnm=cmnd.split()[1]
-    if cmndnm in ispd.keys() and threads[cmndnm]==0:
+    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
      x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
      x.start()
+ threads['addknown']=0
  return
 
 def putzpoolt(*args):
  global threads
- ispd={'putzpool':putzpool}
- threads['putzpool']=0
+ global ispd
  cmdline='rm -rf  /pacedata/putzpool'
  result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
  cmdline='mkfifo -m 660 /pacedata/putzpool'
@@ -376,10 +530,29 @@ def putzpoolt(*args):
    colvlst.sort(key=lambda x:int(x.split()[0]))
    for cmnd in colvlst:
     cmndnm=cmnd.split()[1]
-    if cmndnm in ispd.keys() and threads[cmndnm]==0:
+    if cmndnm in ispd.keys() and threads[cmndnm]==0 and threads['runningetcdnodes']==0:
      x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
      x.start()
  return
+
+def etcdallt(*args):
+ global threads
+ global ispd
+ cmdline='rm -rf  /pacedata/etcdall'
+ result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ cmdline='mkfifo -m 660 /pacedata/etcdall'
+ result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+ while True: 
+  with open('/pacedata/etcdall') as colv:
+   colvlst=colv.readlines()
+   colvlst.sort(key=lambda x:int(x.split()[0]))
+   for cmnd in colvlst:
+    cmndnm=cmnd.split()[1]
+    if cmndnm in ispd.keys():
+     x=Thread(target=ispd[cmndnm],name=cmndnm,args=tuple(cmnd.split()[2:]))
+     x.start()
+ return
+
 
 def checklocalt(*args):
  return 
@@ -388,13 +561,14 @@ def checkinitt(*args):
  return
 
 if __name__=='__main__':
- threads={}
  myhost=socket.gethostname()
  x=Thread(target=isprimaryt,name='checkprimary',args=(1,1))
  x.start()
  x=Thread(target=fixpoolt,name='thepoolfix',args=(1,1))
  x.start()
  x=Thread(target=putzpoolt,name='listpools',args=(1,1))
+ x.start()
+ x=Thread(target=etcdallt,name='etcdall',args=(1,1))
  x.start()
  x=Thread(target=checklocalt,name='checklocal',args=(1,1))
  x.start()
