@@ -15,7 +15,7 @@ echo starting startzfs > /root/tmp2
 #systemctl start smb &
 iscsimapping='/pacedata/iscsimapping';
 runningpools='/pacedata/pools/runningpools';
-enpdev='eno1'
+enpdev='enp0s8'
 myhost=`hostname -s`
 #/sbin/rabbitmqctl add_user rabbmezo HIHIHI 2>/dev/null
 #/sbin/rabbitmqctl set_permissions -p / rabbmezo ".*" ".*" ".*" 2>/dev/null

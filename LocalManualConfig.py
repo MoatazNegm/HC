@@ -6,7 +6,7 @@ from broadcasttolocal import broadcasttolocal
 from ast import literal_eval as mtuple
 import logmsg
 def config(*bargs):
- enpdev='eno1'
+ enpdev='enp0s8'
  with open('/root/HostManualconfigtmp2','w') as f:
   f.write('bargs:'+str(bargs)+'\n')
  with open('/TopStordata/Hostprop.txt') as f:
