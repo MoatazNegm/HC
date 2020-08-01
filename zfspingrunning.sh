@@ -30,14 +30,14 @@ pkill collective
 systemctl restart target >/dev/null
 cd /pace
 rm -rf /pacedata/addiscsitargets 2>/dev/null
-#rm -rf /pacedata/startzfsping 2>/dev/null
-#while [ ! -f /pacedata/startzfsping ];
-#do
-#  sleep 1;
-#  echo cannot run now > /root/zfspingtmp
-#done
-#echo startzfs run >> /root/zfspingtmp
-#/pace/startzfs.sh
+rm -rf /pacedata/startzfsping 2>/dev/null
+while [ -f /pacedata/startzfsping ];
+do
+  sleep 1;
+  echo cannot run now > /root/zfspingtmp
+done
+echo startzfs run >> /root/zfspingtmp
+/pace/startzfs.sh
 leadername=` ./etcdget.py leader --prefix | awk -F'/' '{print $2}' | awk -F"'" '{print $1}'`
 leaderip=` ./etcdget.py leader/$leadername `
 date=`date `
@@ -109,10 +109,14 @@ basetime=$newtime
 newtime=`date +%s`
 echo sendinginfo  $((newtime-basetime)) total=$((newtime-origtime))>> /root/zfspingtiming
 basetime=$newtime
-      echo for $isprimary sending info Partsu03 booted with ip
       echo $ostamp  etcdput ready/$myhost $myip > /pacedata/etcdall & 
       ostamp=$((ostamp+1))
       echo $ostamp  etcdput ActivePartners/$myhost $myip > /pacedata/etcdall & 
+      ostamp=$((ostamp+1))
+      /pace/iscsiwatchdog.sh adddisk  $myhost $leader >/dev/null
+      echo $ostamp zpooltoimport all > /pacedata/zpooltoimport & 
+      echo for $isprimary sending info Partsu03 booted with ip
+      echo $ostamp logmsgthis Partsu03 info system $myhost $myip > /pacedata/etcdall & 
       ostamp=$((ostamp+1))
       partnersync=0
       echo $ostamp  broadcastthis SyncHosts /TopStor/pump.sh addhost.py > /pacedata/etcdall & 
@@ -659,7 +663,6 @@ basetime=$newtime
       then
         if [ $leaderfail -eq 0 ];
         then
-         echo $ostamp logmsgthis Partsu03 info system $myhost $myip > /pacedata/etcdall & 
          ostamp=$((ostamp+1))
          echo $ostamp etcddel cann --prefix > /pacedata/etcdall & 
          ostamp=$((ostamp+1))
@@ -744,9 +747,6 @@ basetime=$newtime
   echo Collecting a change in system occured 
   echo $ostamp changeop $myhost --prefix > /pacedata/zpooltoimport & 
   ostamp=$((ostamp+1))
-  pgrep  selectspare 
-  if [ $? -ne 0 ];
-  then
-    ETCDCTL_API=3 /pace/selectspare.py $myhost >/dev/null 
-  fi
+  echo $ostamp selectspare $myhost --prefix > /pacedata/zpooltoimport & 
+  ostamp=$((ostamp+1))
 done

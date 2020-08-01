@@ -96,6 +96,7 @@ then
  /TopStor/HostManualconfigTZlocal $myip 
  /TopStor/HostManualconfigNTPlocal $myip
  cd /pace
+ ./etcddel.py lost --prefix
  ./etcdget.py configured | grep 1
  if [ $? -eq 0 ];
  then
