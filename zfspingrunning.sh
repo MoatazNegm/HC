@@ -116,7 +116,7 @@ basetime=$newtime
       /pace/iscsiwatchdog.sh adddisk  $myhost $leader >/dev/null
       echo $ostamp zpooltoimport all > /pacedata/zpooltoimport & 
       echo for $isprimary sending info Partsu03 booted with ip
-      echo $ostamp logmsgthis Partsu03 info system $myhost $myip > /pacedata/etcdall & 
+      echo $ostamp logmsgthis Partsu03 info system $myhost $myip > /pacedata/zpooltoimport & 
       ostamp=$((ostamp+1))
       partnersync=0
       echo $ostamp  broadcastthis SyncHosts /TopStor/pump.sh addhost.py > /pacedata/etcdall & 
