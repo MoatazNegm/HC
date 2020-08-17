@@ -115,6 +115,7 @@ basetime=$newtime
       ostamp=$((ostamp+1))
       /pace/iscsiwatchdog.sh adddisk  $myhost $leader >/dev/null
       echo $ostamp zpooltoimport all > /pacedata/zpooltoimport & 
+      ostamp=$((ostamp+1))
       echo for $isprimary sending info Partsu03 booted with ip
       echo $ostamp logmsgthis Partsu03 info system $myhost $myip > /pacedata/zpooltoimport & 
       ostamp=$((ostamp+1))

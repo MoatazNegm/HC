@@ -12,6 +12,7 @@ from broadcast import broadcast as broadcast
 from os import listdir
 from datetime import datetime
 from os.path import getmtime
+from evacuatelocal import evacuate
 import logmsg, poolall
 from broadcasttolocal import broadcasttolocal as broadcasttolocal
 from etcdgetlocal import etcdget as getlocal
@@ -481,49 +482,7 @@ def checkknown(*args):
 
 def evacuatelocal(*args):
  threads['evacuaelocal']=1
- thehosts=get('toremove','start')
- if thehosts[0]==-1:
-  threads['evacuaelocal']=0
-  return
- leader=get('leader','--prefix')[0][0].replace('leader/','')
- myip=get('ready',myhost)[0][1]
- for host in thehosts:
-  hostn=host[0].replace('toremove/','')
-  hostip=get('ActivePartners/'+hostn)[0]
-  if myhost in hostn and myhost in leader:
-   cmdline=['/TopStor/Converttolocal.sh',myip]
-   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
-  if myhost in hostn and myhost not in leader:
-   putlocal(myip,'toreset','yes')
-   put('toremovereset/'+hostn,'reset')
-   cmdline=['/pace/removetargetdisks.sh', hostn, hostip]
-   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
-   cmdline=['/TopStor/rebootme','finished']
-   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
-  hostreset=get('toremovereset/'+hostn,'reset')[0]
-  if hostn in str(hostreset): 
-   if myhost not in hostn : 
-    hosts=get('toremove/'+hostn,'done')
-    if myhost not in str(hosts):
-     put('toremove/'+hostn+'/'+myhost,'done')
-     cmdline=['/pace/removetargetdisks.sh', hostn, hostip]
-     result=subprocess.run(cmdline,stdout=subprocess.PIPE)
-   if myhost not in hostn and myhost in leader:
-    actives=get('Active','--prefix')
-    dones=get('toremove/'+hostn,'done')
-    doneall=1
-    for active in actives:
-     activen=active[0].replace('ActivePartners/','')
-     if activen not in str(dones) and activen not in str(thehosts): 
-      doneall=0
-      break
-    if doneall==1:
-     frstnode=get('frstnode')[0]
-     newnode=frstnode.replace('/'+hostn,'').replace(hostn+'/','')
-     put('frstnode',newnode)
-     deli("", hostn)
-     put('tosync','yes')
-     logmsg.sendlog('Evacuaesu01','info','system',hostn)
+ evacuate(*args)
  threads['evacuaelocal']=0
  return
 
