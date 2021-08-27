@@ -24,7 +24,7 @@ clocker=0
 oldclocker=0
 clockdiff=0
 date=`date`
-enpdev='enp0s8'
+enpdev='eno1'
 systemctl restart target
 cd /pace
 rm -rf /pacedata/addiscsitargets 2>/dev/null

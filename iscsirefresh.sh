@@ -6,6 +6,7 @@ needrescan=0;
 myhost=`hostname -s`
 hosts=`./etcdget.py ready --prefix | awk -F"', " '{print $2}' | awk -F"'" '{print $2}'`
 for host in $hosts ; do
+echo I am here $host
  echo $sessions  | grep $host
  if [ $? -ne 0 ]; then
   needrescan=1;
