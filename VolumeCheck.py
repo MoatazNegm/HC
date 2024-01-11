@@ -19,6 +19,8 @@ def dosync(*args):
 def getippos(vtype):
     if ('cifs' or 'home') in vtype:
         return 7
+    elif 'nfs' in vtype:
+        return 9
     else: 
         return 0
 def getdirtyvols(vtype, etcds, replis, dockers):
@@ -46,7 +48,7 @@ def getdirtyvols(vtype, etcds, replis, dockers):
         if reslist[1] not in str(etcds):
             dirtyset.add(res)
         for dckr in dockers.split('\n'):
-            if reslist[7] in dckr and reslist[-1] =='active':
+            if reslist[ippos] in dckr and reslist[-1] =='active':
                 dckrname=dckr.split(' ')[-1]
                 cmdline = 'docker inspect '+dckrname
                 result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
@@ -54,11 +56,11 @@ def getdirtyvols(vtype, etcds, replis, dockers):
                 if reslist[1] not in str(result):
                     print('not in')
                     dirtyset.add(res)
-        if reslist[7] not in dockers and 'active' in reslist[-1]:
+        if reslist[ippos] not in str(dockers) and 'active' in reslist[-1]:
             dirtyset.add(res)
     return dirtyset
 
-def nfs( etcds, replis, exports):
+def nfsold( etcds, replis, exports):
     global leader, leaderip, myhost, myhostip, etcdip
     #dirtyset = getdirtyvols('nfs', etcds, replis, )
     flag = 0
@@ -94,6 +96,31 @@ def nfs( etcds, replis, exports):
         dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
         
     return    
+def nfs( etcds, replis, dockers):
+ global leader, leaderip, myhost, myhostip, etcdip
+ dirtyset = getdirtyvols('nfs', etcds, replis, dockers)
+ print('dirty',dirtyset)
+ for res in dirtyset:
+   reslist=res.split('/')
+#pdhcp1287810983/nftt_2386812076/10.11.11.*/rw/sync/insecure/no_root_squash/no_all_squash/Everyone/10.11.11.23/24/active
+#pdhcp1287810983/forsnap_2050719952/no/yes/Everyone/administrator/yes/10.11.11.8/24/active
+   print('update',reslist[1])
+   cmdline = '/TopStor/undockerthis.sh '+reslist[7]
+   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+   left='volumes/NFS/'+myhost+'/'+'/'.join(reslist[0:2])
+   put(leaderip, left,res)
+   dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
+   #broadcasttolocal(left,res)
+   cmdline='/TopStor/nfs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[9]+' '+reslist[10]+' NFS '+' '.join(reslist[11:])
+   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+   print(result)
+   put(etcdip,'dirty/volume','0')
+
+
+
+
+
+
 def cifs( etcds, replis, dockers):
  global leader, leaderip, myhost, myhostip, etcdip
  dirtyset = getdirtyvols('cifs', etcds, replis, dockers)
@@ -186,7 +213,7 @@ def volumecheck(etcds, replis, *args):
   f.write(str(etcds))
  #exports = [ x.split('exports.')[1] for x in exports ]
  cifs(etcds, replis, dockers)
- nfs(etcds, replis, exports)
+ nfs(etcds, replis, dockers)
  homes(etcds, replis, dockers)
  iscsi(etcds, replis)
   
