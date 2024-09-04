@@ -17,9 +17,7 @@ def dosync(*args):
   return 
 
 def getippos(vtype):
-    print('vvvvvvvvvvvvvvvvvvvvvvvvvvvvv')
     print('vtype',vtype)
-    print('vvvvvvvvvvvvvvvvvvvvvvvvvvvvv')
     if vtype in ['cifs', 'home']:
         return 7
     elif 'nfs' in vtype:
