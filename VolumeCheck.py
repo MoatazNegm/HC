@@ -17,9 +17,7 @@ def dosync(*args):
   return 
 
 def getippos(vtype):
-    print('vvvvvvvvvvvvvvvvvvvvvvvvvvvvv')
     print('vtype',vtype)
-    print('vvvvvvvvvvvvvvvvvvvvvvvvvvvvv')
     if vtype in ['cifs', 'home']:
         return 7
     elif 'nfs' in vtype:
@@ -148,10 +146,8 @@ def homes(etcds, replis, dockers):
    left='volumes/HOMEE/'+myhost+'/'+'/'.join(reslist[0:2])
    put(leaderip, left,res)
    dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
-   #broadcasttolocal(left,res)
    cmdline='/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' HOMEE '+' '.join(reslist[9:])
    print('home cifs: '+cmdline)
-    #cmdline='/TopStor/VolumeActivateCIFS '+leaderip+' vol='+reslist[1]+' user=system'
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    print('result',result)
    put(etcdip,'dirty/volume','0')
@@ -186,7 +182,7 @@ def cleanfailed(dockers):
         print('dock:',cmdline,'....',result)
         if result in fails:
             print('cleaning',dom[0],dom[1])
-            cmdline = 'docker restart '+ dom[1]
+            cmdline = 'docker rm -f '+ dom[1]
             result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
     
 def volumecheck(etcds, replis, *args):
