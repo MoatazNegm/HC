@@ -19,7 +19,7 @@ dirtydic = { 'pool': 0, 'volume': 0 }
 syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'diskref', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf' ]
 special1 = [ 'passwd' ]
 forReceivers = [ 'user', 'group', 'GrpChange', 'UsrChange' ] + special1
-wholeetcd = [ 'offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines']
+wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines']
 etcdonly = [ 'cleanlost','balancedtype','sizevol', 'ActPool', 'alias', 'hostipsubnet', 'allowedPartners','activepool', 'poolnxt','pools', 'logged','ActivePartners','configured','ready', 'pool']
 restartetcd = wholeetcd + etcdonly
 replisyncs = ['user','group']
@@ -353,14 +353,17 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  if 'pullsync' in pullsync:
     print('allsyncs',pullsync,allsyncs)
  donerequests = [ x for x in allsyncs if '/request/dhcp' in str(x) ] 
- mysyncs = [ x[1] for x in allsyncs if '/request/'+myhost in str(x) or ('request/' and '/'+clusterhost) in str(x) ] 
+ #mysyncs = [ x[1] for x in allsyncs if '/request/'+myhost in str(x) or ('request/' and '/'+clusterhost) in str(x) ] 
+ mysyncs = [ x[1] for x in allsyncs if '/request/'+myhost in str(x) ] 
+ print('mysyncs',mysyncs)
  if myhost == leader:
     if 'pullsync' in pullsync:
         myrequests = [ x for x in allsyncs if x[1] not in mysyncs  and '/request/dhcp' not in x[0] ] 
     else:
         myrequests = [ x for x in allsyncs if x[1] not in mysyncs  and '/request/dhcp' not in x[0] and '/initial' not in x[0] ] 
  else:
-    myrequests = [ x for x in allsyncs if x[1] not in mysyncs  and '/request/dhcp' not in x[0] and 'pullsync' not in pullsync ] 
+    myrequests = [ x for x in allsyncs if x[1] not in mysyncs  and '/request/dhcp' not in x[0] ] 
+    print('myrequests:',myrequests)
     print('iiiiiiiiiiiiiiiiiiiiiiiiiihere')
  if len(myrequests) > 1:
     print('multiple requests',myrequests)
