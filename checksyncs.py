@@ -94,10 +94,12 @@ def checksync(hostip='request',*args):
 def syncinit(leader,leaderip, myhost,myhostip):
  global syncs, syncanitem, forReceivers, etcdonly, allsyncs, noinit
  stamp = int(timestamp() + 3600)
-
+ cinital = str(get(leaderip, 'sync/','initia'))
  for sync in syncs:
-  put(leaderip,'sync/'+sync+'/'+'initial/request',sync+'_initial_'+str(stamp)) 
-  put(leaderip,'sync/'+sync+'/'+'initial/request/'+myhost,sync+'_initial_'+str(stamp)) 
+  if 'sync/'+sync  not in cinitial:
+    print('found new sync')
+    put(leaderip,'sync/'+sync+'/'+'initial/request',sync+'_initial_'+str(stamp)) 
+    put(leaderip,'sync/'+sync+'/'+'initial/request/'+myhost,sync+'_initial_'+str(stamp)) 
  return
 
 def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',pport='',myalias=''):
