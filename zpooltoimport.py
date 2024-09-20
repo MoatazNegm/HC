@@ -76,8 +76,6 @@ def zpooltoimport(*args):
             print('done')
             cmdline="zpool get guid "+pool+" -H "
             guid=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()[2]
-
-            dels(leaderip,'sync/ActPool', pool)
             put(leaderip,'ActPool/'+pool,guid)
             dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+guid+'/request','actpool_'+str(stamp()))
             dels(etcdip, 'poouids/'+pool) 
@@ -108,8 +106,19 @@ def zpooltoimport(*args):
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    print('result',result)
    if pool in result:
+    cmdline = 'zpool reguid '+pool
+    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+    if result.returncode == 0:
+       print('done')
+    cmdline="zpool get guid "+pool+" -H "
+    guid=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()[2]
+    dels(leaderip,'sync/ActPool', pool)
+    put(leaderip,'ActPool/'+pool,guid)
+    dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+guid+'/request','actpool_'+str(stamp()))
+    dels(etcdip, 'poouids/'+pool) 
+
     put(etcdip, 'dirty/volume','0')
-    put(etcdip, 'poouids/'+pool,myhost)
+    #put(etcdip, 'poouids/'+pool,myhost)
     print('before sync')
     print('sync pools Add')
     dels(leaderip,'sync/pools', pool)
@@ -138,8 +147,8 @@ def zpooltoimport(*args):
     notpid = notpo['guid'] 
     if (notpname in str(activepools) and (notpid in str(activepools) or len(readies) == 1)) or notpname not in str(activepools): 
         cpools = cpools + [notpo] 
-    if len(readies) == 1:
-        dels(leaderip, 'ActPool/'+notpname)
+    #if len(readies) == 1:
+    #    dels(leaderip, 'ActPool/'+notpname)
  
  for poolinfo in cpools:
     pool = poolinfo['name']
