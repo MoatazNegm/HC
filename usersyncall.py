@@ -13,7 +13,7 @@ def usrfninit(ldr,ldrip,hst,hstip,pprt='-1'):
  return
 allusers = []
 
-def thread_add(user,syncip, tosync=''):
+def thread_add(user,syncip, tosync='pullavail'):
  global myusers
  global allusers, leader ,leaderip, myhost, myhostip,pport
  username=user[0].replace('usersinfo/','')
@@ -21,21 +21,40 @@ def thread_add(user,syncip, tosync=''):
   return
  with open('/root/usersync2','w') as f:
   f.write(str(user)+' + '+str(username)+'\n')
+ 
  if 'pullsync' in tosync:
     userhash=getnoport(leaderip,pport,'usershash/'+username)[0]
+    everyone=getnoport(leaderip,pport,'usersigroup/Everyone',username)
+    if '_1' not in str(everyone):
+        everyone=',Everyone'
+    else:
+        everyone=''
  else:
     userhash=get(leaderip,'usershash/'+username)[0]
+    everyone=get(leaderip, 'usersigroup/Everyone',username)
+    if '_1' not in str(everyone):
+        everyone=',Everyone'
+    else:
+        everyone=''
  userinfo=user[1].split(':')
  userid=userinfo[0]
  usergd=userinfo[1]
- userhome=userinfo[2]
- cmdline=['/TopStor/UnixAddUser_sync',leader, leaderip, myhost, myhostip, username,userhash,userid,usergd,userhome]
+ usersplit = user[1].split('/')
+ homePool = usersplit[1]
+ usergroups = usersplit[2] 
+ userpass = userhash
+ size = usersplit[3]
+ HomeAddr = usersplit[-3]
+ HomeSubnet = usersplit[-2]
+ active = usersplit[-1]
+ permissions = ",".join(usersplit[4:-3])
+ cmdline=['/TopStor/UnixAddUser',leaderip,username, homePool, 'groups'+usergroups+everyone,userhash, size, HomeAddr, HomeSubnet, tosync, userid,usergd,active, permissions,'system']
+ print('***************************')
+ print(cmdline)
+ print('***************************')
  result=subprocess.run(cmdline,stdout=subprocess.PIPE)
- put(syncip, user[0],user[1])
- put(syncip, 'usershash/'+username,userhash)
- print(' '.join(cmdline)) 
 
-def thread_del(username,syncip, pullsync='normal'):
+def thread_del(username,syncip, pullsync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip
  global allusers
  if  'NoUser' == username:
@@ -45,7 +64,7 @@ def thread_del(username,syncip, pullsync='normal'):
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
   dels(syncip,'user',username)
 
-def usersyncall(tosync=''):
+def usersyncall(tosync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip,pport
  global allusers
  global myusers
@@ -72,7 +91,7 @@ def usersyncall(tosync=''):
      user=user[0].replace('usersinfo/','')
      thread_del(user, syncip, tosync)
 
-def oneusersync(oper,usertosync,tosync=''):
+def oneusersync(oper,usertosync,tosync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip, pport
  print('args',oper,usertosync)
  if myhost in leader:
@@ -87,11 +106,8 @@ def oneusersync(oper,usertosync,tosync=''):
         user=get(leaderip,'usersinfo', usertosync)[0]
     thread_add(user,syncip,tosync)
  else:
-   if 'pullsync' in tosync:
     user = usertosync
-   else:
-    user=user[0].replace('usersinfo/','')
-   thread_del(user,syncip,tosync)
+    thread_del(user,syncip,tosync)
  
   
 if __name__=='__main__':

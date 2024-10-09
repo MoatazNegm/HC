@@ -79,11 +79,11 @@ def hostlost(host, hostip):
                 dels(etcd, 'known/'+host)
                 dels(etcd, 'vol'+host)
                 dels(etcd, 'sync/hostdown',host)
-                cmdline='/pace/zpootoimport.py'
+                cmdline='/pace/zpooltoimport.py'
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                cmdline='/pace/zpootoimport.py'
+                cmdline='/pace/zpooltoimport.py'
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                cmdline='/pace/zpootoimport.py'
+                cmdline='/pace/zpooltoimport.py'
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
 
 def heartbeat(*args):
@@ -118,8 +118,6 @@ def heartbeat(*args):
         for known in knowns:
             host = known[0].split('/')[1]
             if host == myhost:
-                continue
-            if host != leader and myhost != leader:
                 continue
             if host == leader:
                 hostip = leaderip

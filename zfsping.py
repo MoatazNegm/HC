@@ -19,7 +19,9 @@ from activeusers import activeusers
 from addactive import addactive
 from selectimport import selectimport
 from zpooltoimport import zpooltoimport
-from selectspare import spare2  
+#from selectspare import spare2  
+def spare2(x,y,*others):
+ return
 from checksyncs import syncrequest, initchecks
 from VolumeCheck import volumecheck
 from multiprocessing import Process
@@ -181,18 +183,9 @@ def refreshall():
  zpooltoimport(leader, myhost)
  etcds = get(etcdip,'volumes','--prefix')
  replis = get(etcdip, 'replivol','--prefix')
+ putzpool()
  volumecheck(etcds, replis)
  spare2(leader, myhost)
- sleep(4)
- putzpool()
- spare2(leader, myhost)
- sleep(4)
- putzpool()
- spare2(leader, myhost)
- sleep(4)
- putzpool()
- spare2(leader, myhost)
- sleep(4)
  putzpool()
  refresh = 0 
 def selectspareproc():
@@ -202,11 +195,8 @@ def selectspareproc():
     return
  selectsparerun = 1
  try:
+  putzpool()
   clsscsi = 'nothing'
-  spare2(leader, myhost)
-  putzpool()
-  spare2(leader, myhost)
-  putzpool()
   spare2(leader, myhost)
   putzpool()
   cmdline='lsscsi -is'
@@ -339,28 +329,36 @@ if __name__=='__main__':
    print('dic',dic)
    put(etcdip, 'dirty/'+dic,'1000')
  print('etcd',etcdip)
+ stopat = 0 
+ counter = 1 
  while True:
   zfspinginit()
-  zload = getload(leaderip,myhost)
-  counter = 0
-  while zload > 65:
-   sleep(2)
-   counter += 1
-   if counter > 10:
-    zload = 0
-   else:
-    zload = getload(leaderip,myhost)
-    print('still load high',zload,'counter',counter)
-  print('load ok', zload)
-  with ProcessPoolExecutor(6) as e:
-    for i in range(len(loopers)*2):
-     args = loopers[i % len(loopers)]
-     print('starting a new task',i,args)
+  with ProcessPoolExecutor() as e:
+    for i in range(len(loopers)):
+     if stopat not in range(len(loopers)):
+        stopat = 0 
+     zload = getload(leaderip,myhost)
+     if zload > 65 and counter > 0:
+        print('still load high',zload,'counter',counter,'process number',i, 'stopped at',stopat)
+        sleep(2)
+        counter = counter +1 
+        if counter < 30:
+            continue
+        else: 
+            counter = -len(loopers) 
+            zload = 40
+     else:
+        counter += 1
+     print('fixing i to ',stopat)
+     args = loopers[stopat]
+     print('starting a new task',stopat,args)
      res = e.submit(CommonTask,args)
+     sleep(2)
      dirty = get(etcdip, 'dirty','--prefix')
      for dirt in dirty:
       dirtydic[dirt[0].split('/')[1]] = dirt[1]
      print('---------dirty------',dirty)
-    sleep(2)
+     print('load ok', zload)
+     stopat = stopat+1
  exit()
 
