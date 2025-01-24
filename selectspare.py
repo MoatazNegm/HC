@@ -404,6 +404,9 @@ def solvedegradedraid(raid,diskname):
  global leader, leaderip, myhost, myhostip, etcdip
  if 'dm-' in str(diskname):
     return
+ print('diskname', diskname)
+ if 'replacing' in diskname:
+    return
  hosts=get(etcdip, 'ready','--prefix')
  hosts=[host[0].split('/')[1] for host in hosts]
  raidhosts= set()
@@ -411,7 +414,8 @@ def solvedegradedraid(raid,diskname):
  disksample = []
  sparedisk = []
  if 'stripe' in raid['name']:
-    cmdline2=['/sbin/zpool', 'detach',raid['pool'], disk['actualdisk']]
+    #cmdline2=['/sbin/zpool', 'detach',raid['pool'], disk['actualdisk']]
+    cmdline2=['/sbin/zpool', 'detach',raid['pool'], diskname ]
     forget=subprocess.run(cmdline2,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     print('detaching the faulty disk',forget.stderr.decode())
     return
