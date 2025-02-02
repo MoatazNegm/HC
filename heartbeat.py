@@ -97,6 +97,7 @@ def heartbeat(*args):
     cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip'
     myhostip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
     nochange = 1
+    knownsn =  0
     port = myport = '2379'
     if myhost == leader:
         etcd = leaderip
@@ -107,12 +108,16 @@ def heartbeat(*args):
         print('looping')
         sleep(1)
         tries = 0
-        while tries < 3:
+        while tries < 8:
             knowns = get(etcd, 'ready','--prefix')
             if 'dhcp' in str(knowns):
                 tries = 10
                 break
             tries +=1
+        if len(knowns) == knownsn and knownsn == 1:
+            print('only one host is running..,,will do nothing')
+            continue
+        knownsn = len(knowns)
         if tries < 10: 
            hostlost(leader, leaderip)
         for known in knowns:
