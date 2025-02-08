@@ -49,7 +49,6 @@ def getdirtyvols(vtype, etcds, replis, dockers):
             dirtyset.add(res)
         for dckr in dockers.split('\n'):
             dckrip = dckr.split(' ')[-1].split('-')[-1]
-            print('reslist',result)
             if dckrip != reslist[ippos]:
                 continue
             if reslist[7] in dckr and reslist[-1] =='active':
@@ -114,26 +113,17 @@ def nfsnew( etcds, replis, dockers):
  for res in dirtyset:
    reslist=res.split('/')
    print('update',reslist[1])
-   exit()
-   cmdline = '/TopStor/undockerthis.sh '+reslist[7]
+   cmdline = '/TopStor/undockerthis.sh '+reslist[getippos('nfs')]
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   if 'DOMAIN' in str(res):
-    left='volumes/CIFS_'+reslist[9]+'/'+myhost+'/'+'/'.join(reslist[0:2])
-   else:
-    left='volumes/CIFS/'+myhost+'/'+'/'.join(reslist[0:2])
+   left='volumes/NFS/'+myhost+'/'+'/'.join(reslist[0:2])
    put(leaderip, left,res)
-   print('tosync this',leaderip, left,res)
    dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
-   if 'DOMAIN' in str(res):
-     cmdline='/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' CIFS_'+reslist[9]+' '+' '.join(reslist[9:])
-
-   else:
-    cmdline='/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' CIFS '+' '.join(reslist[9:])
-    print('cif cifs: '+cmdline)
+   cmdline='/TopStor/nfsnew.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[9]+' '+reslist[10]+' NFS'
+   print('aloooooooooooooooooooooo')
+   print(cmdline)
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   print('cifs result',result)
    put(etcdip,'dirty/volume','0')
-
+   exit()
 
 def cifs( etcds, replis, dockers):
  global leader, leaderip, myhost, myhostip, etcdip
