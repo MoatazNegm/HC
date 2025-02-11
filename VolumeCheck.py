@@ -51,7 +51,7 @@ def getdirtyvols(vtype, etcds, replis, dockers):
             dckrip = dckr.split(' ')[-1].split('-')[-1]
             if dckrip != reslist[ippos]:
                 continue
-            if reslist[7] in dckr and reslist[-1] =='active':
+            if reslist[ippos] in dckr and reslist[-1] =='active':
                 dckrname=dckr.split(' ')[-1]
                 cmdline = 'docker inspect '+dckrname
                 result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
@@ -62,7 +62,7 @@ def getdirtyvols(vtype, etcds, replis, dockers):
                     print('reslist1',reslist[1], dckrname)
                     print('gggggggggggggggggggggggggggggggggggggggggg')
                     dirtyset.add(res)
-        if reslist[7] not in dockers and 'active' in reslist[-1]:
+        if reslist[ippos] not in dockers and 'active' in reslist[-1]:
             dirtyset.add(res)
     print('dirtyset', dirtyset)
     return dirtyset
@@ -123,7 +123,6 @@ def nfsnew( etcds, replis, dockers):
    print(cmdline)
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    put(etcdip,'dirty/volume','0')
-   exit()
 
 def cifs( etcds, replis, dockers):
  global leader, leaderip, myhost, myhostip, etcdip
@@ -221,17 +220,18 @@ def volumecheck(etcds, replis, *args):
  dockers = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8') 
  #cmdline = 'ls /TopStordata'
  #exports = subprocess.run(cmdline.split(),shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8')
- cmdline = 'rm -rf /TopStordata/exportip*'
- subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8') 
- exports = glob('/pdhc*/exports*')
+ #cmdline = 'rm -rf /TopStordata/exportip*'
+ #subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8') 
+ #exports = glob('/pdhc*/exports*')
  with open('/root/volumecheck','w') as f:
   f.write(str(etcds))
  #exports = [ x.split('exports.')[1] for x in exports ]
  print('----------------------------------------------------')
+ print(etcds,'\n',dockers)
  nfsnew(etcds, replis, dockers)
  print('----------------------------------------------------')
  cifs(etcds, replis, dockers)
- nfs(etcds, replis, exports)
+ #nfs(etcds, replis, exports)
  homes(etcds, replis, dockers)
  iscsi(etcds, replis)
  cleanfailed(dockers) 
