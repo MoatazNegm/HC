@@ -122,8 +122,14 @@ def putzpool():
      if 'CIFS_' in volume[10]:
         cmdline = 'zfs get ip:addr -H '+volume[0]
         ipaddr=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()[2]
-        cmdline = '/TopStor/getdomvolstatus.sh '+ipaddr
+        cmdline = '/TopStor/getdomvolstatus.sh '+ipaddr+' '+'CIFS_'
         vdict['runtime']=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split('_result')[1]
+     elif 'NFS' in volume[10]:
+        cmdline = 'zfs get ip:addr -H '+volume[0]
+        ipaddr=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()[2]
+        cmdline = '/TopStor/getdomvolstatus.sh '+ipaddr+' '+'NFS'
+        vdict['runtime']=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split('_result')[1]
+ 
      else:
         vdict['runtime'] ='serviceok'
      volumelist.append(vdict)
