@@ -46,6 +46,7 @@ def hostlost(host, hostip):
                 clusterip = get(leaderip,'namespace/mgmtip')[0]
                 if host == leader:
                     dels(myhostip, 'pools',host)
+                    dels(myhostip, 'vol',host)
                     print('leader lost. nextleader is ',nextleader, 'while my host',myhost)
                     nextleader =  get(etcd,'nextlead/er')[0]
                     leader = nextleader 
@@ -73,11 +74,11 @@ def hostlost(host, hostip):
                 dels(etcd, 'cpuperf/'+host)
                 cmdline='/pace/hostlost.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+host
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                dels(etcd,'ready/'+host)
+                dels(etcd,'ready/',host)
                 dels(etcd, 'running/', host)
                 dels(etcd, 'host', host)
-                dels(etcd, 'known/'+host)
-                dels(etcd, 'vol'+host)
+                dels(etcd, 'known/',host)
+                dels(etcd, 'vol',host)
                 dels(etcd, 'sync/hostdown',host)
                 cmdline='/pace/zpooltoimport.py'
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
