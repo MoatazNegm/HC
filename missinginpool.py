@@ -4,7 +4,7 @@ from etcdgetpy import etcdget as get
 from ast import literal_eval as mtuple
 
 cmdline=['/sbin/zpool', 'status']
-result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+result=subprocess.run(cmdline,stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 mylist=str(result.stdout)[2:][:-3].split('\\n')
 mylist=[x.split()[1] for x in mylist if 'ONLINE' in x and 'scsi' in x]
 cmdline=['/bin/lsscsi', '-i']

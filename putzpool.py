@@ -16,7 +16,7 @@ def putzpool():
  readyhosts=get(myip, 'ready','--prefix')
  knownpools=[f for f in listdir('/TopStordata/') if 'pdhcp' in f and 'pree' not in f ]
  cmdline='/sbin/zpool status '
- result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout
+ result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout
  sty=str(result)[2:][:-3].replace('\\t','').split('\\n')
  cmdline='/bin/lsscsi -is'
  result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout

@@ -37,7 +37,7 @@ for host in "${hosts[@]}"; do
   #alldevdisk=(`ls -l /dev/disk/by-path/ | grep  "$host"  | grep -v part | grep -v wwn | awk '{print $11}'`)
   alldevdisk=(`lsblk -Sn | grep ${sesinfo}\: | awk '{print $1}'`)
   echo alldev=${alldevdisk[@]}
-  alldev2=`/sbin/zpool status | grep scsi | awk '{print $1" "$2}'`
+  alldev2=`/sbin/zpool status >/dev/null | grep scsi | awk '{print $1" "$2}'`
   for devdisk in "${alldevdisk[@]}"; do
     diskstatus='free'
 #   diskid=`ls -l /dev/disk/by-id/ | grep  "$devdisk" | grep -v wwn | grep -v part | awk '{print $9}'`

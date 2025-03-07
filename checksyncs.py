@@ -94,7 +94,7 @@ def checksync(hostip='request',*args):
 def syncinit(leader,leaderip, myhost,myhostip):
  global syncs, syncanitem, forReceivers, etcdonly, allsyncs, noinit
  stamp = int(timestamp() + 3600)
- cinital = str(get(leaderip, 'sync/','initia'))
+ cinitial = str(get(leaderip, 'sync/','initia'))
  for sync in syncs:
   if 'sync/'+sync  not in cinitial:
     print('found new sync')
@@ -577,6 +577,7 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
 
      
 def restetcd(leader,leaderip, myhost,myhostip):
+    print('restetcd is',leader,leaderip,myhost,myhostip)
     if myhost == leader:
         return
     for sync in wholeetcd :
