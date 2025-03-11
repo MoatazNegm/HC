@@ -267,6 +267,7 @@ def spaceopti():
 
 #loopers = [ addknownproc, remknownproc, activeusersproc, iscsiwatchdogproc, putzpoolproc, addactiveproc, selectimportproc, zpooltoimportproc , volumecheckproc, selectspareproc , syncrequestproc ]
 loopers = [ zpooltoimportproc, selectspareproc , putzpoolproc, spaceopti, croncallproc ]
+loopers = [  putzpoolproc, spaceopti, croncallproc ]
 #loopers = [ zpooltoimportproc, volumecheckproc, selectspareproc , putzpoolproc]
 
 def CommonTask(task):

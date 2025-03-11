@@ -170,14 +170,22 @@ def zpooltoimport(*args):
      
        
 if __name__=='__main__':
-    cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leader'
-    leader=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
-    cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leaderip'
-    leaderip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
-    cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py clusternode'
-    myhost=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
-    cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip'
-    myhostip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
+    import sys
+    if len(sys.argv) == 5:
+        leader=sys.argv[1]
+        leaderip=sys.argv[2]
+        myhost=sys.argv[3]
+        myhostip=sys.argv[4]
+    else:
+        print('sysargv',len(sys.argv))
+        cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leader'
+        leader=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
+        cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leaderip'
+        leaderip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
+        cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py clusternode'
+        myhost=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
+        cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip'
+        myhostip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
     if leader == myhost:
         etcdip = leaderip 
     else:
