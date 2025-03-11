@@ -6,6 +6,7 @@ echo $@ >> /root/diskchangeparam
 echo $@ | grep 'dm-'
 if [ $? -eq 0 ];
 then
+	echo dm- is in the parameters so exiting
 	exit
 fi
 stamp=`date `
@@ -47,7 +48,8 @@ then
 	echo 1 > /sys/block/$actualdev/device/delete
 	echo dev=$dev $actualdev $stamp >> /root/diskremove
 fi
-echo $mypidc | grep start
+exit
+echo ii$mypidc | grep start
 if [ $? -eq 0 ];
 then
 	echo hihihihi
@@ -57,16 +59,16 @@ then
 fi
 echo sssssssssssssssssssssssssssssssss
 oldpid=`echo $mypidc | awk '{print $4}'`
-
 echo i$@ | grep -w i$oldpid
 if [ $? -eq 0 ];
 then 
 	echo hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh $oldpid ,,,,,,,,,,,,$@
 	mypidc='stop'
 else
-	echo $mypidc | grep stop
+	echo ll$mypidc | grep stop
 	if [ $? -ne 0 ];
 	then
+		echo mypidc is not a stop
 		exit
 	fi
 fi
