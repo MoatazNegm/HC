@@ -16,10 +16,10 @@ from etctocron import etctocron
 from collectconfig import collectConfig
 
 dirtydic = { 'pool': 0, 'volume': 0 } 
-syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'diskref', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf' ]
+syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf' ]
 special1 = [ 'passwd' ]
 forReceivers = [ 'user', 'group', 'GrpChange', 'UsrChange' ] + special1
-wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines']
+wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref']
 etcdonly = [ 'cleanlost','balancedtype','sizevol', 'ActPool', 'alias', 'hostipsubnet', 'allowedPartners','activepool', 'poolnxt','pools', 'logged','ActivePartners','configured','ready', 'pool']
 restartetcd = wholeetcd + etcdonly
 replisyncs = ['user','group']
@@ -250,9 +250,9 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
        synckeys(leaderip,myhostip, sync,sync)
        etctocron(leaderip)
       elif sync in 'diskref':
-        cmdline='/pace/diskchange.sh '+' checksync'+' '+opers[0]+' '+opers[1]
+        #cmdline='/pace/diskchange.sh '+' checksync'+' '+opers[0]+' '+opers[1]
         print('diskref',cmdline)
-        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        #result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
       elif sync in 'hostdown':
         cmdline='/pace/hostdown.sh '+opers[0]
         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
@@ -423,9 +423,9 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
        synckeys(leaderip,myhostip, sync,sync)
        etctocron(leaderip)
       elif sync in 'diskref':
-        cmdline='/pace/diskchange.sh '+' checksync'+' '+opers[0]+' '+opers[1]
+        #cmdline='/pace/diskchange.sh '+' checksync'+' '+opers[0]+' '+opers[1]
         print('diskref',cmdline)
-        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        #result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
       elif sync in 'hostdown':
         cmdline='/pace/hostdown.sh '+opers[0]
         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
