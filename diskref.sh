@@ -1,4 +1,4 @@
-#!/usr/bin/sh
+#!/usr/bin/bash
 # needed the operands to be like : one:two:three:four
 #
 echo $@ > /root/diskref
@@ -23,8 +23,8 @@ then
 else
 	etcdip=$myhostip
 fi
-/pace/iscsirefresh.sh $etcdip $myhost
+#/pace/iscsirefresh.sh $etcdip $myhost
 /pace/addtargetdisks.sh $etcdip $myhost
 /pace/iscsirefresh.sh $etcdip $myhost
-stamp=`date +%s`
-/pace/etcdput.py $leaderip sync/dirty/____/request  dirty_$stamp
+#stamp=`date +%s`
+#/pace/etcdput.py $leaderip sync/dirty/____/request  dirty_$stamp

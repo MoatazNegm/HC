@@ -7,7 +7,7 @@ volumecheckpy() {
 
 while true;
 do
+ sleep 10 
  volumecheckpy
- sleep 5 
 done
 

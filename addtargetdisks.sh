@@ -1,4 +1,4 @@
-#!/usr/bin/sh
+#!/usr/bin/bash
 ######################
 #exit
 ##########################
@@ -21,44 +21,57 @@ actives=`/pace/etcdget.py $etcdip Active --prefix`
 change=0
 #echo hi1 $myhost>> /root/targetadd
 #declare -a iscsitargets=(`cat /pacedata/iscsitargets | awk '{print $2}' `);
-initialtarget=`targetcli ls | wc -l`
+initialt=$(targetcli ls)
+echo hhhhhhhhhhhhhhhhhhh
+initialtarget=`echo $initialt | wc -l`
 myip=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip`
 mycluster=`nmcli conn show mycluster | grep ipv4.addresses | awk '{print $2}' | awk -F'/' '{print $1}'`
 declare -a iscsitargets=(`docker exec etcdclient /pace/iscsiclients.py $etcdip | grep target | awk -F'/' '{print $2}'`);
-currentdisks=`targetcli ls /iscsi`
-disks=(`lsblk -nS -o name,serial,vendor | grep -vw $bootdisk | grep -v sr0 |  grep -v LIO | awk '{print $1}'`)
+#currentdisks=$(echo "$initialt" | awk '/o- iscsi/{flag=1} flag; /o- loopback/{flag=0}')
+currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}')
+#currentdisks=`targetcli ls /iscsi`
+lsblk=$(lsblk -nS -o name,serial,vendor)
+disks=(`echo "$lsblk" | grep -vw $bootdisk | grep -v sr0 |  grep -v LIO | awk '{print $1}'`)
 nodes=(`docker exec etcdclient /TopStor/etcdgetlocal.py Active --prefix | awk -F'Partners/' '{print $2}' | awk -F"'" '{print $1}'`)
-diskids=`lsblk -nS -o name,serial,vendor | grep -vw $bootdisk | grep -v sr0 | grep -v LIO | awk '{print $1" "$2}'`
-mappedhosts=`targetcli ls /iscsi | grep Mapped`;
-targets=`targetcli ls backstores/block | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}'`
-blocks=`targetcli ls backstores/block `
+diskids=`echo "$lsblk" | grep -vw $bootdisk | grep -v sr0 | grep -v LIO | awk '{print $1" "$2}'`
+mappedhosts=`echo "$currentdisks" | grep Mapped`;
+blocks=$(echo "$initialt" | awk '/^  \| o- block /{flag=1} flag; /^  \| o- fileio /{flag=0}')
+targets=`echo "$blocks" | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}'`
+#blocks=`targetcli ls backstores/block `
 # filter the new iscsi disks that were not part of the backstore , then create them if needed
+flag=0
 for ddisk in  "${disks[@]}"; do
-	echo $blocks | grep $ddisk >/dev/null
 	if [ $? -ne 0 ];
 	then
-		echo $ddisk not a part in the targets
+		echo the disk $ddisk not a part in the targets
 		ordinary=`lsscsi -i | grep -w $ddisk | grep -v LIO | awk '{print $NF}'`
 		#scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi | grep -v LIO | grep -v SLS | awk '{print $9}'`
 		scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi-$ordinary | awk '{print $9}'`
   		targetcli backstores/block create ${ddisk}-${myhost} /dev/disk/by-id/$scsidisk
+		flag=1
 		
 	else
-		echo $ddisk is a part in the targets backstore
+		echo the disk $ddisk is a part in the targets backstore
 	fi
 done
 declare -a newdisks=();
 # check and create the t1 entry of myhost
-targetcli ls iscsi/ | grep $myhost:t1 >/dev/null
+if [ $flag -eq 1 ];
+then
+	initialt=`targetcli ls`
+	blocks=$(echo "$initialt" | awk '/^  \| o- block /{flag=1} flag; /^  \| o- fileio /{flag=0}')
+	targets=$(echo "$blocks" | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}')
+fi
+echo ii$currentdisks | grep $myhost:t1 >/dev/null
 if [ $? -ne 0 ];
 then
  targetcli iscsi/ create iqn.2016-03.com.$myhost:t1
 else
-	echo t1 entry is already create for $myhost
+	echo t1 entry is already created for $myhost
 fi
-tpgs1=(`targetcli ls /iscsi | grep iqn`) 
+#tpgs1=(`targetcli ls /iscsi | grep iqn`) 
 # check if my ip was changed so I have a wrong tpg1, of it my tpg was not created before. so I create the write tpg 
-targetcli ls iscsi/iqn.2016-03.com.$myhost:t1/tpg1/portals | grep $myip &>/dev/null
+echo "$currentdisks" | grep $myip:3266 &>/dev/null
 if [ $? -ne 0 ]; then
  targetcli iscsi/iqn.2016-03.com.${myhost}:t1/tpg1/portals delete 0.0.0.0 3260
  targetcli iscsi/iqn.2016-03.com.${myhost}:t1/tpg1/portals ls | grep 3266 | awk -F'o-' '{print $2}' | awk -F':' '{print $1}'
@@ -81,33 +94,29 @@ for ddisk in "${disks[@]}"; do
   pdisk=`ls /dev/disk/by-id/ | grep $idisk | grep -v part | grep scsi | head -1`
   targetcli backstores/block create ${devdisk}-${myhost} /dev/disk/by-id/$pdisk
   change=1
-  tpgs=(`targetcli ls /iscsi | grep iqn | grep TPG | grep ':t1' | awk -F'iqn' '{print $2}' | awk '{print $1}'`)
-  for iqn in "${tpgs[@]}"; do
-   ################################targetcli iscsi/iqn${iqn}/tpg1/luns/ create /backstores/block/${devdisk}-${myhost}  
-   change=1
-  done
  else
   echo $devdisk-$myhost is already created in the backstores/block 
  fi
 done;
-
 #######check if one of the hosts is new and was not mapped before
 for target in "${iscsitargets[@]}"; do
  echo $mappedhosts | grep $target &>/dev/null
  if [ $? -ne 0 ]; then
   change=1
+  break;
  fi
 done
-
 targetcli /iscsi/iqn.2016-03.com.${myhost}:t1 set global auto_add_mapped_luns=true
-tpgs1=(`targetcli ls /iscsi | grep iqn | grep TPG | grep ':t1'`)
-tpgs=(`targetcli ls /iscsi | grep iqn | grep TPG | grep ':t1' | awk -F'iqn' '{print $2}' | awk '{print $1}'`)
 
+tpgs1=`echo "$currentdisks" | grep iqn | grep TPG | grep :t1`
+#tpgs1=(`targetcli ls /iscsi | grep iqn | grep TPG | grep ':t1'`)
+tpgs=`echo "$currentdisks" | grep iqn | grep TPG | grep ':t1' | awk -F'iqn' '{print $2}' | awk '{print $1}'`
 # mapping the luns to every iqn in the tpgs create the missing ones and create also the 
 for node in "${nodes[@]}"; do
  for ddisk in "${disks[@]}"; do
 	for iqn in "${tpgs[@]}"; do
- 		targetcli iscsi/iqn${iqn}/tpg1/acls/ ls | grep redhat:$node >/dev/null
+
+ 		echo "$currentdisks" |  awk -v iqn="iqn$iqn" '$0 ~ iqn {flag=1} flag; /o- portals/{flag=0}'  | grep redhat:$node >/dev/null
 		if [ $? -ne 0 ];
 		then
   			targetcli iscsi/iqn${iqn}/tpg1/acls/ create iqn.1994-05.com.redhat:$node
@@ -115,6 +124,7 @@ for node in "${nodes[@]}"; do
 		else
 		 	echo the node $node already has an acl entry the tpgs 
 		fi
+		
  		devdisk=`echo $ddisk | awk '{print $1}'`
  		targetcli iscsi/iqn${iqn}/tpg1/luns/ ls | grep  ${devdisk}-${myhost}  >/dev/null
 		if [ $? -eq 0 ];
