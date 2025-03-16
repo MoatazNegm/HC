@@ -24,4 +24,3 @@ for host in "${nodes[@]}" ; do
   /sbin/iscsiadm -m node --targetname $hostiqn --portal ${host}:3266 -l
   fi
 done
-sleep 2

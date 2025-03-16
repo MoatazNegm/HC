@@ -2,6 +2,7 @@
 ######################
 #exit
 ##########################
+stamp=`date +%s`
 echo $@ > /root/addtargets
 bootdisk='sda'
 bootdiskf='/TopStordata/bootdiskf'
@@ -61,14 +62,26 @@ then
 	initialt=`targetcli ls`
 	blocks=$(echo "$initialt" | awk '/^  \| o- block /{flag=1} flag; /^  \| o- fileio /{flag=0}')
 	targets=$(echo "$blocks" | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}')
+	currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}')
+	flag=0
 fi
 echo ii$currentdisks | grep $myhost:t1 >/dev/null
 if [ $? -ne 0 ];
 then
  targetcli iscsi/ create iqn.2016-03.com.$myhost:t1
+ flag=1
 else
 	echo t1 entry is already created for $myhost
 fi
+if [ $flag -eq 1 ];
+then
+	initialt=`targetcli ls`
+	blocks=$(echo "$initialt" | awk '/^  \| o- block /{flag=1} flag; /^  \| o- fileio /{flag=0}')
+	targets=$(echo "$blocks" | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}')
+	currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}')
+	flag=0
+fi
+
 #tpgs1=(`targetcli ls /iscsi | grep iqn`) 
 # check if my ip was changed so I have a wrong tpg1, of it my tpg was not created before. so I create the write tpg 
 echo "$currentdisks" | grep $myip:3266 &>/dev/null
@@ -80,8 +93,17 @@ if [ $? -ne 0 ]; then
  echo oldip=$oldip
  #targetcli iscsi/iqn.2016-03.com.${myhost}:t1/tpg1/portals delete$olidp 3266
  targetcli iscsi/iqn.2016-03.com.$myhost:t1/tpg1/portals create $myip 3266
+ flag=1
 else
   echo my tpg1 portal is already created
+fi
+if [ $flag -eq 1 ];
+then
+	initialt=`targetcli ls`
+	blocks=$(echo "$initialt" | awk '/^  \| o- block /{flag=1} flag; /^  \| o- fileio /{flag=0}')
+	targets=$(echo "$blocks" | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}')
+	currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}')
+	flag=0
 fi
 targetcli /iscsi/iqn.2016-03.com.${myhost}:t1 set global auto_add_mapped_luns=true
 i=0;
@@ -93,19 +115,21 @@ for ddisk in "${disks[@]}"; do
  if [ $? -ne 0 ]; then
   pdisk=`ls /dev/disk/by-id/ | grep $idisk | grep -v part | grep scsi | head -1`
   targetcli backstores/block create ${devdisk}-${myhost} /dev/disk/by-id/$pdisk
-  change=1
+  flag=1
  else
   echo $devdisk-$myhost is already created in the backstores/block 
  fi
 done;
 #######check if one of the hosts is new and was not mapped before
-for target in "${iscsitargets[@]}"; do
- echo $mappedhosts | grep $target &>/dev/null
- if [ $? -ne 0 ]; then
-  change=1
-  break;
- fi
-done
+if [ $flag -eq 1 ];
+then
+	initialt=`targetcli ls`
+	blocks=$(echo "$initialt" | awk '/^  \| o- block /{flag=1} flag; /^  \| o- fileio /{flag=0}')
+	targets=$(echo "$blocks" | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}')
+	currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}')
+	flag=0
+fi
+
 targetcli /iscsi/iqn.2016-03.com.${myhost}:t1 set global auto_add_mapped_luns=true
 
 tpgs1=`echo "$currentdisks" | grep iqn | grep TPG | grep :t1`
@@ -126,10 +150,10 @@ for node in "${nodes[@]}"; do
 		fi
 		
  		devdisk=`echo $ddisk | awk '{print $1}'`
- 		targetcli iscsi/iqn${iqn}/tpg1/luns/ ls | grep  ${devdisk}-${myhost}  >/dev/null
+ 		echo "$currentdisks" |  awk -v iqn="iqn$iqn" '$0 ~ iqn {flag=1} flag; /o- portals/{flag=0}' | awk -v iqn="o- luns" '$0 ~ iqn {flag=1} flag; /o- portals/{flag=0}' | grep  ${devdisk}-${myhost}  >/dev/null
 		if [ $? -eq 0 ];
 		then
-			echo iqn$iqn has a map for $devdisk-$myhost
+			echo iqn$iqn already has a map for $devdisk-$myhost
 		else
 			echo iqn$iqn is not mapped to  $devdisk
    			targetcli iscsi/iqn${iqn}/tpg1/luns/ create /backstores/block/${devdisk}-${myhost}  
@@ -141,10 +165,11 @@ done
 targetcli /iscsi/iqn.2016-03.com.${myhost}:t1 set global auto_add_mapped_luns=false
 
 #echo hi9 >> /root/targetadd
-targetcli saveconfig
-
-endingtarget=`targetcli ls | wc -l`
-if [[ $initialtarget != $endingtarget ]];
-then
-  stamp=`date +%s%N`
-fi
+#targetcli saveconfig
+#exit
+#endingtarget=`targetcli ls | wc -l`
+#if [[ $initialtarget != $endingtarget ]];
+#then
+stamp2=`date +%s`
+echo endtime=$((stamp2-stamp))
+#fi

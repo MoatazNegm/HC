@@ -1,4 +1,4 @@
-#!/usr/bin/sh
+#!/usr/bin/bash
 leaderip=`echo $@ | awk '{print $1}'`
 myhost=`echo $@ | awk '{print $2}'`
 syncrequest() {

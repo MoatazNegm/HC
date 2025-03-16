@@ -1,8 +1,12 @@
-#!/usr/bin/sh
+#!/usr/bin/bash
+
+leader=`echo $@ | awk '{print $3}'`
+leaderip=`echo $@ | awk '{print $1}'`
+myhost=`echo $@ | awk '{print $2}'`
+myhostip=`echo $@ | awk '{print $4}'`
 volumecheckpy() {
-	cd /TopStor
-    	leaderip=`docker exec etcdclient /TopStor/etcdgetlocal.py leaderip`
- 	/pace/VolumeCheck.py $leaderip `hostname` 
+	cd /pace
+ 	/pace/VolumeCheck.py $leaderip $myhost 
 }
 
 while true;
