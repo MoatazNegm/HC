@@ -7,6 +7,6 @@ cd /TopStor
 while true;
 do
  fapipy
- sleep 3 
+ sleep 10 
 done
 
