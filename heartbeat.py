@@ -80,12 +80,6 @@ def hostlost(host, hostip):
                 dels(etcd, 'known/',host)
                 dels(etcd, 'vol',host)
                 dels(etcd, 'sync/hostdown',host)
-                cmdline='/pace/zpooltoimport.py'
-                result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                cmdline='/pace/zpooltoimport.py'
-                result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                cmdline='/pace/zpooltoimport.py'
-                result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
 
 def heartbeat(*args):
     global etcd, leader ,leaderip, myhost, myhostip
