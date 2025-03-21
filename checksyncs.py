@@ -244,7 +244,7 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
       elif 'getconfig' in sync:
         collectConfig(leaderip, myhost)
       elif sync in 'cversion':
-        cmdline='/TopStor/systempull.sh '+opers[1]
+        cmdline='/TopStor/myrepopull.sh '+opers[1]
         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
       elif sync in 'Snapperiod' :
        synckeys(leaderip,myhostip, sync,sync)
