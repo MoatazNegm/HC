@@ -80,7 +80,7 @@ def selectimport(*args):
         #print("DEBUG selectimport: str(poolnxt): ", str(poolnxt))
         #print("DEBUG selectimport: poolnxt value:", poolnxt)
 
-        if 'dhcp' in str(poolnxt) or nhost == '_1':
+        if 'dhcp' in str(poolnxt) or nhost == '_1' or chost == nhost:
             minhost = ('',float('inf'))
             #print("DEBUG selectimport: initial minhost: ", minhost)
 
