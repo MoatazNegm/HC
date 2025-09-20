@@ -16,13 +16,13 @@ from etctocron import etctocron
 from collectconfig import collectConfig
 
 dirtydic = { 'pool': 0, 'volume': 0 } 
-syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf' ]
+syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf', 'log' ]
 special1 = [ 'passwd' ]
 forReceivers = [ 'user', 'group', 'GrpChange', 'UsrChange' ] + special1
 wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref']
 etcdonly = [ 'cleanlost','balancedtype','sizevol', 'ActPool', 'alias', 'hostipsubnet', 'allowedPartners','activepool', 'poolnxt','pools', 'logged','ActivePartners','configured','ready', 'pool']
 restartetcd = wholeetcd + etcdonly
-replisyncs = ['user','group']
+replisyncs = ['user','group', 'UsrChange', 'GrpChange']
 syncs = etcdonly + syncanitem + special1 + wholeetcd
 
 noinit = [ 'getconfig','cversion', 'replipart' , 'evacuatehost','hostdown','namespace' , 'ipaddr','cluip']
@@ -113,15 +113,16 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
      print('found etctocron')
      synckeys(leaderip,myhostip, sync,sync)
      etctocron(leaderip)
-    if sync in 'user':
-     print('syncing all users')
-     usrfninit(leader,leaderip, myhost,myhostip,pport)
-     usersyncall(pullsync) 
-     #synckeys(leaderip, myhostip, pullsync+'user', 'user')
     if sync in 'group':
      print('syncing all groups')
      grpfninit(leader,leaderip, myhost,myhostip,pport)
      groupsyncall(pullsync)
+    if sync in 'user':
+     print('syncing all users')
+     usrfninit(leader,leaderip, myhost,myhostip,pport)
+     usersyncall(pullsync)
+     groupsyncall(pullsync)
+     #synckeys(leaderip, myhostip, pullsync+'user', 'user')
     if sync in ['tz','ntp','gw','dns']: 
      cmdline='/TopStor/HostManualconfig'+sync.upper()+" "+" ".join([leader, leaderip, myhost, myhostip]) 
      print('cmd',cmdline)
@@ -209,7 +210,7 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
   if '/initial/' in str(syncinfo):
    print(leader,leaderip,myhost,myhostip, syncinfo)
    doinitsync(leader,leaderip,myhost,myhostip, syncinfo,'pullsync',pport,myalias)
-   return
+   continue
   else:
    syncleft = syncinfo[0]
    stamp = syncinfo[1]
@@ -414,6 +415,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         if myhost in str(get(myhostip,'nextlead','--prefix')):
             cmdline='/TopStor/promrepli.sh '+leaderip+' '+myhostip
             result=subprocess.run(cmdline.split(),stderr=subprocess.STDOUT)
+      elif 'log' in sync:
+        logid=f"{opers[0]}_{opers[1]}"
+        cmdline=f"/TopStor/synclogs.sh {leaderip} {etcdip} {logid} {opers[1]}"
+        result=subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
       elif 'getconfig' in sync:
         collectConfig(leaderip, myhost)
       elif sync in 'cversion':
