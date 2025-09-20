@@ -16,7 +16,7 @@ from etctocron import etctocron
 from collectconfig import collectConfig
 
 dirtydic = { 'pool': 0, 'volume': 0 } 
-syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf' ]
+syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf', 'log' ]
 special1 = [ 'passwd' ]
 forReceivers = [ 'user', 'group', 'GrpChange', 'UsrChange' ] + special1
 wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref']
@@ -414,6 +414,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         if myhost in str(get(myhostip,'nextlead','--prefix')):
             cmdline='/TopStor/promrepli.sh '+leaderip+' '+myhostip
             result=subprocess.run(cmdline.split(),stderr=subprocess.STDOUT)
+      elif 'log' in sync:
+        logid=f"{opers[0]}_{opers[1]}"
+        cmdline=f"/TopStor/synclogs.sh {leaderip} {etcdip} {logid} {opers[1]}"
+        result=subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
       elif 'getconfig' in sync:
         collectConfig(leaderip, myhost)
       elif sync in 'cversion':
