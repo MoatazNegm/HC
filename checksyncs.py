@@ -16,10 +16,10 @@ from etctocron import etctocron
 from collectconfig import collectConfig
 
 dirtydic = { 'pool': 0, 'volume': 0 } 
-syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf', 'log' ]
+syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf', 'log', 'bond' ]
 special1 = [ 'passwd' ]
 forReceivers = [ 'user', 'group', 'GrpChange', 'UsrChange' ] + special1
-wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref', 'bond']
+wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref']
 etcdonly = [ 'cleanlost','balancedtype','sizevol', 'ActPool', 'alias', 'hostipsubnet', 'allowedPartners','activepool', 'poolnxt','pools', 'logged','ActivePartners','configured','ready', 'pool']
 restartetcd = wholeetcd + etcdonly
 replisyncs = ['user','group', 'UsrChange', 'GrpChange']
@@ -134,6 +134,9 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
         oldinfo = get(leaderip, 'usersinfo/'+user)[0]
         if oldinfo != newinfo:
             flag = 0
+    if 'bond' in sync:
+        cmdline = f"/TopStor/syncbonds.sh {etcdip}"        
+        subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
  if sync not in syncs:
   print('there is a sync that is not defined:',sync)
   return 
@@ -419,6 +422,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         logid=f"{opers[0]}_{opers[1]}"
         cmdline=f"/TopStor/synclogs.sh {leaderip} {etcdip} {logid} {opers[1]}"
         result=subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+      elif 'bond' in sync:
+        synckeys(leaderip, myhostip, sync, sync)
+        cmdline = f"/TopStor/syncbonds.sh {etcdip}"
+        subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
       elif 'getconfig' in sync:
         collectConfig(leaderip, myhost)
       elif sync in 'cversion':
