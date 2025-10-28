@@ -134,9 +134,9 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
         oldinfo = get(leaderip, 'usersinfo/'+user)[0]
         if oldinfo != newinfo:
             flag = 0
-    if 'bond' in sync:
-        cmdline = f"/TopStor/syncbonds.sh {etcdip}"        
-        subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+#    if 'bond' in sync:
+#        cmdline = f"/TopStor/syncbonds.sh {etcdip}"        
+#        subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
  if sync not in syncs:
   print('there is a sync that is not defined:',sync)
   return 
