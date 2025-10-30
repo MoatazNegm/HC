@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import subprocess, sys
+import os, atexit
 from logqueue import queuethis
 from etcdgetpy import etcdget as get
 from etcdgetnoportpy import etcdget as getnoport
@@ -14,6 +15,8 @@ from etcdsync import synckeys
 from time import time as timestamp
 from etctocron import etctocron 
 from collectconfig import collectConfig
+
+REBOOT_REQUIRED = False
 
 dirtydic = { 'pool': 0, 'volume': 0 } 
 syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf', 'log', 'bond' ]
@@ -33,6 +36,17 @@ noinit = [ 'getconfig','cversion', 'replipart' , 'evacuatehost','hostdown','name
 ##### initial sync for known nodes : sync/Operation/initial Operation_stamp #######################
 ##### synced template for initial sync for known nodes : sync/Operation/initial/node Operation_stamp #######################
 ##### delete request of same sync if ActivePartners qty reached #######################
+
+def _reboot_if_required():
+    """Checks the global flag and reboots the system if set."""
+    global REBOOT_REQUIRED
+    if REBOOT_REQUIRED:
+        print("checksyncs.py has completed. Executing scheduled reboot for bond changes.")
+        os.sync() 
+        subprocess.run(["/usr/sbin/systemctl", "reboot"])
+
+atexit.register(_reboot_if_required)
+
 software = 'na'
 def insync(leaderip, leader):
     print('checking in sync -------------------')
@@ -137,7 +151,10 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
     if 'bond' in sync:
         synckeys(leaderip, myhostip, sync, sync)
         cmdline = f"/TopStor/syncbonds.sh {leaderip}"        
-        subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+        result = subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+        if result.returncode == 10:
+            print("Bond config changed. Queuing system reboot for after syncs complete.")
+            REBOOT_REQUIRED = True
  if sync not in syncs:
   print('there is a sync that is not defined:',sync)
   return 
@@ -426,7 +443,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
       elif 'bond' in sync:
         synckeys(leaderip, myhostip, sync, sync)
         cmdline = f"/TopStor/syncbonds.sh {etcdip}"
-        subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+        result = subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+        if result.returncode == 10:
+            print("Bond config changed. Queuing system reboot for after syncs complete.")
+            REBOOT_REQUIRED = True
       elif 'getconfig' in sync:
         collectConfig(leaderip, myhost)
       elif sync in 'cversion':
