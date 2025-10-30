@@ -135,6 +135,7 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
         if oldinfo != newinfo:
             flag = 0
     if 'bond' in sync:
+        synckeys(leaderip, myhostip, sync, sync)
         cmdline = f"/TopStor/syncbonds.sh {leaderip}"        
         subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
  if sync not in syncs:
