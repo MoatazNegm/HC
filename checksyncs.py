@@ -43,7 +43,7 @@ def _reboot_if_required():
     if REBOOT_REQUIRED:
         print("checksyncs.py has completed. Executing scheduled reboot for bond changes.")
         os.sync() 
-        subprocess.run(["/usr/sbin/systemctl", "reboot"])
+        subprocess.run(["/usr/bin/systemctl", "reboot"])
 
 atexit.register(_reboot_if_required)
 
