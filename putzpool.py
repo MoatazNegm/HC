@@ -161,7 +161,7 @@ def putzpool():
    disklist=[]
    missingdisks=[0]
    b[1] = 'NA'
-   if 'Availability' in zdict['availtype'] and raid not in availraids: 
+   if 'Availability' in zdict['availtype'] and b[0] not in availraid: 
     b[1] = 'DEGRADED' 
    rdict={ 'name':b[0], 'changeop':b[1],'status':b[1],'pool':zdict['name'],'host':myhost,'disklist':disklist,'silvering':'no', 'missingdisks':missingdisks }
    raidlist.append(rdict)
