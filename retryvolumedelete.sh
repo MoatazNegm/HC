@@ -54,7 +54,7 @@ attempt_volume_deletion() {
 }
 
 
-entry=$(/pace/etcdget.py "$leaderip" "cVolToDelete/$myhost")
+entry=$(/pace/etcdget.py $leaderip cVolToDelete/$myhost)
 
 if [[ "$entry" == "_1" || -z "$entry" ]]; then
     exit 0
