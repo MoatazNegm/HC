@@ -33,8 +33,9 @@ then
 		then
  			./etcdput.py $myhostip rebootme/$myhost donot 
 		fi
- 		/TopStor/resetdocker.sh
- 		reboot
+ 		#/TopStor/resetdocker.sh
+ 		#reboot
+		/TopStor/docker_setup.sh reboot & disown 
 	else
 		echo $isreboot ____ no reboot
 fi
