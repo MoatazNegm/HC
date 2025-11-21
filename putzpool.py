@@ -40,6 +40,7 @@ def putzpool():
  ldefdisks=[]
  linusedisks=[]
  lfreedisks=[]
+ lcachedisks=[]
  lsparedisks=[]
  lhosts=set()
  phosts=set()
@@ -61,7 +62,8 @@ def putzpool():
  zfslistall=str(result.stdout)[2:][:-3].replace('\\t',' ').split('\\n')
  #lists=[lpools,ldisks,ldefdisks,lavaildisks,lfreedisks,lsparedisks,lraids,lvolumes,lsnapshots]
  #zfslistall=str(result.stdout)[2:][:-3].replace('\\t',' ').split('\\n')
- lists={'pools':lpools,'disks':ldisks,'defdisks':ldefdisks,'inusedisks':linusedisks,'freedisks':lfreedisks,'sparedisks':lsparedisks,'raids':lraids,'volumes':lvolumes,'snapshots':lsnapshots, 'hosts':list(lhosts), 'phosts':list(phosts)}
+ #lists={'pools':lpools,'disks':ldisks,'defdisks':ldefdisks,'inusedisks':linusedisks,'freedisks':lfreedisks,'sparedisks':lsparedisks,'raids':lraids,'volumes':lvolumes,'snapshots':lsnapshots, 'hosts':list(lhosts), 'phosts':list(phosts)}
+ lists={'pools':lpools,'disks':ldisks,'defdisks':ldefdisks,'inusedisks':linusedisks,'freedisks':lfreedisks,'cachedisks':lcachedisks,'sparedisks':lsparedisks,'raids':lraids,'volumes':lvolumes,'snapshots':lsnapshots, 'hosts':list(lhosts), 'phosts':list(phosts)}
  silvering = 'no'
  silveringflag = 'no'
  for a in sty:
@@ -259,15 +261,60 @@ def putzpool():
     silvering = 'no'
     disklist.append(ddict)
     ldisks.append(ddict)
+
+ try:
+    cache_config_raw = get(myip, 'cachespares')
+    print(f"DEBUG: Cache raw value: {cache_config_raw}")
+    if cache_config_raw and isinstance(cache_config_raw, list) and len(cache_config_raw) > 0:
+        raw_json_string = cache_config_raw[0]
+        raw_json_string = raw_json_string.replace("'", '"').strip()
+        if '[' in raw_json_string:
+            cache_ids = json.loads(raw_json_string)
+            print(f"DEBUG: Cache IDs from etcd: {cache_ids}")     
+        else:
+            cache_ids = []
+    else:
+        cache_ids = []
+ except:
+    cache_ids = []
+ print(f"DEBUG 2: Cache IDs from etcd: {cache_ids}")
+# if len(freepool) > 0:
+#  raidlist=[]
+#  zdict={ 'name':'pree','changeop':'pree', 'available':'0', 'status':'pree', 'host':myhost,'used':'0', 'alloc': '0', 'empty': '0','size':'0', 'dedup': '0', 'compressratio': '0','silvering':'no', 'raidlist': raidlist, 'volumes':[]}
+#  zpool.append(zdict)
+#  lpools.append(zdict)
+#  disklist=[]
+#  rdict={ 'name':'free', 'changeop':'free','status':'free','pool':'pree','host':myhost,'disklist':disklist, 'missingdisks':[0], 'silvering':'no' }
+#  raidlist.append(rdict)
+#  lraids.append(rdict)
+#  for lss in freepool:
+#   z=lss.split()
+#   devname=z[5].replace('/dev/','')
+#   if devname not in drives:
+#    continue
+#   diskid=lsscsi.index(lss)
+#   host=z[3].split('-')[1]
+#   if host not in str(readyhosts):
+#    continue
+# ##### commented for not adding free disks of freepool
+#   lhosts.add(host)
+#   size=z[7]
+#   ddict={'name':'scsi-'+z[6],'actualdisk':'scsi-'+z[6],'zname':"", 'changeop':'free','status':'free','raid':'free','pool':'pree','id': str(diskid), 'host':host, 'size':size,'devname':devname, 'silvering':'no'}
+#   if z[6] in str(zpool):
+#    continue
+#   disklist.append(ddict)
+#   ldisks.append(ddict)
+
  if len(freepool) > 0:
   raidlist=[]
+  
   zdict={ 'name':'pree','changeop':'pree', 'available':'0', 'status':'pree', 'host':myhost,'used':'0', 'alloc': '0', 'empty': '0','size':'0', 'dedup': '0', 'compressratio': '0','silvering':'no', 'raidlist': raidlist, 'volumes':[]}
   zpool.append(zdict)
   lpools.append(zdict)
-  disklist=[]
-  rdict={ 'name':'free', 'changeop':'free','status':'free','pool':'pree','host':myhost,'disklist':disklist, 'missingdisks':[0], 'silvering':'no' }
-  raidlist.append(rdict)
-  lraids.append(rdict)
+
+  disklist_free = []
+  disklist_cache = []
+
   for lss in freepool:
    z=lss.split()
    devname=z[5].replace('/dev/','')
@@ -277,14 +324,37 @@ def putzpool():
    host=z[3].split('-')[1]
    if host not in str(readyhosts):
     continue
- ##### commented for not adding free disks of freepool
+   
    lhosts.add(host)
    size=z[7]
-   ddict={'name':'scsi-'+z[6],'actualdisk':'scsi-'+z[6],'zname':"", 'changeop':'free','status':'free','raid':'free','pool':'pree','id': str(diskid), 'host':host, 'size':size,'devname':devname, 'silvering':'no'}
+   
+   this_disk_name = 'scsi-'+z[6]
+   
+   if this_disk_name in cache_ids:
+       status_label = 'cache'
+       target_list = disklist_cache
+   else:
+       status_label = 'free'
+       target_list = disklist_free
+
+   ddict={'name':this_disk_name,'actualdisk':this_disk_name,'zname':"", 'changeop':status_label,'status':status_label,'raid':status_label,'pool':'pree','id': str(diskid), 'host':host, 'size':size,'devname':devname, 'silvering':'no'}
+   
    if z[6] in str(zpool):
     continue
-   disklist.append(ddict)
+   
+   target_list.append(ddict)
    ldisks.append(ddict)
+
+  if len(disklist_free) > 0:
+      rdict_free={ 'name':'free', 'changeop':'free','status':'free','pool':'pree','host':myhost,'disklist':disklist_free, 'missingdisks':[0], 'silvering':'no' }
+      raidlist.append(rdict_free)
+      lraids.append(rdict_free)
+
+  if len(disklist_cache) > 0:
+      rdict_cache={ 'name':'cache', 'changeop':'cache','status':'cache','pool':'pree','host':myhost,'disklist':disklist_cache, 'missingdisks':[0], 'silvering':'no' }
+      raidlist.append(rdict_cache)
+      lraids.append(rdict_cache)
+
  if len(lhosts)==0:
     lhosts.add('')
  if len(phosts)==0:
@@ -293,6 +363,8 @@ def putzpool():
  for disk in ldisks:
   if disk['changeop']=='free':
    lfreedisks.append(disk)
+  elif disk['changeop'] =='cache':
+   lcachedisks.append(disk)
   elif disk['changeop'] =='AVAIL':
    lsparedisks.append(disk)
   elif disk['changeop'] != 'ONLINE': 
