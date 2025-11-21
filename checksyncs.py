@@ -437,12 +437,12 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
             cmdline='/TopStor/promrepli.sh '+leaderip+' '+myhostip
             result=subprocess.run(cmdline.split(),stderr=subprocess.STDOUT)
       elif 'log' in sync:
-        logid=f"{opers[0]}_{opers[1]}"
-        cmdline=f"/TopStor/synclogs.sh {leaderip} {etcdip} {logid} {opers[1]}"
+        logid=opers[0]+"_"+opers[1]
+        cmdline="/TopStor/synclogs.sh  "+leaderip+" "+etcdip+" "+logid+" "+opers[1]
         result=subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
       elif 'bond' in sync:
         synckeys(leaderip, myhostip, sync, sync)
-        cmdline = f"/TopStor/syncbonds.sh {etcdip}"
+        cmdline ="/TopStor/syncbonds.sh "+etcdip
         result = subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
         if result.returncode == 10:
             print("Bond config changed. Queuing system reboot for after syncs complete.")
