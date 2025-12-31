@@ -2,8 +2,8 @@
 
 # Usage: retryvolumedelete.sh <leaderip> <myhost>
 
-leaderip=$1
-myhost=$2
+leaderip=`echo $@ | awk '{print $1}'`
+myhost=`echo $@ | awk '{print $2}'`
 
 MAX_RETRIES=3
 RETRY_DELAY=5
@@ -54,7 +54,7 @@ attempt_volume_deletion() {
 }
 
 
-entry=$(/pace/etcdget.py "$leaderip" "cVolToDelete/$myhost")
+entry=$(/pace/etcdget.py $leaderip cVolToDelete/$myhost)
 
 if [[ "$entry" == "_1" || -z "$entry" ]]; then
     exit 0
@@ -63,7 +63,10 @@ fi
 IFS="|" read -r pDG volname userreq caller_script <<< "$entry"
 
 if [[ -z "$pDG" || -z "$volname" ]]; then
+    echo leader=$leaderip $myhost
+    echo entry=$entry
     log_message error contper03 $entry  .
+    log_message error contper03 $leaderip $myhost 
     exit 1
 fi
 

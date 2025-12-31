@@ -22,7 +22,11 @@ dirtydic = { 'pool': 0, 'volume': 0 }
 syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf', 'log', 'bond' ]
 special1 = [ 'passwd' ]
 forReceivers = [ 'user', 'group', 'GrpChange', 'UsrChange' ] + special1
+<<<<<<< HEAD
+wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref', 'ports', 'cachespares']
+=======
 wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref']
+>>>>>>> QSD4.121
 etcdonly = [ 'cleanlost','balancedtype','sizevol', 'ActPool', 'alias', 'hostipsubnet', 'allowedPartners','activepool', 'poolnxt','pools', 'logged','ActivePartners','configured','ready', 'pool']
 restartetcd = wholeetcd + etcdonly
 replisyncs = ['user','group', 'UsrChange', 'GrpChange']
@@ -437,12 +441,12 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
             cmdline='/TopStor/promrepli.sh '+leaderip+' '+myhostip
             result=subprocess.run(cmdline.split(),stderr=subprocess.STDOUT)
       elif 'log' in sync:
-        logid=f"{opers[0]}_{opers[1]}"
-        cmdline=f"/TopStor/synclogs.sh {leaderip} {etcdip} {logid} {opers[1]}"
+        logid=opers[0]+"_"+opers[1]
+        cmdline="/TopStor/synclogs.sh  "+leaderip+" "+etcdip+" "+logid+" "+opers[1]
         result=subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
       elif 'bond' in sync:
         synckeys(leaderip, myhostip, sync, sync)
-        cmdline = f"/TopStor/syncbonds.sh {etcdip}"
+        cmdline ="/TopStor/syncbonds.sh "+etcdip
         result = subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
         if result.returncode == 10:
             print("Bond config changed. Queuing system reboot for after syncs complete.")
