@@ -22,11 +22,7 @@ dirtydic = { 'pool': 0, 'volume': 0 }
 syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf', 'log', 'bond' ]
 special1 = [ 'passwd' ]
 forReceivers = [ 'user', 'group', 'GrpChange', 'UsrChange' ] + special1
-<<<<<<< HEAD
 wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref', 'ports', 'cachespares']
-=======
-wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools','cversion', 'needtoreplace','Partnr', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref']
->>>>>>> QSD4.121
 etcdonly = [ 'cleanlost','balancedtype','sizevol', 'ActPool', 'alias', 'hostipsubnet', 'allowedPartners','activepool', 'poolnxt','pools', 'logged','ActivePartners','configured','ready', 'pool']
 restartetcd = wholeetcd + etcdonly
 replisyncs = ['user','group', 'UsrChange', 'GrpChange']
