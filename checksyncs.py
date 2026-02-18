@@ -45,7 +45,7 @@ def _reboot_if_required():
         os.sync() 
         subprocess.run(["/usr/bin/systemctl", "reboot"])
 
-atexit.register(_reboot_if_required)
+#atexit.register(_reboot_if_required)
 
 software = 'na'
 def insync(leaderip, leader):
