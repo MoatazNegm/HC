@@ -29,7 +29,8 @@ find_stop_blocking_containers() {
 
     while IFS= read -r cname; do
         if docker inspect "$cname" 2>/dev/null | grep -q "$volname"; then
-            log_message "info" "Stopping blocking container: $cname"
+            #`log_message "info" "Stopping blocking container: $cname"
+	    log_message info contpst04 "$cname" "$volume_path"
             log_message info contpst02 $cname $volume_path
             if docker stop "$cname" >/dev/null 2>&1; then
                 log_message info contpsu02 $cname $volume_path
