@@ -316,7 +316,11 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
        if sync in ['cluip','ipaddr', 'namespace','tz','ntp','gw','dns', 'cf']: 
         cmdline='/TopStor/HostManualconfig'+sync.upper()+" "+" ".join([leader, leaderip, myhost, myhostip]) 
         print('cmdline',cmdline)
-        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        try:
+         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        except subprocess.CalledProcessError as e:
+         print('HostManualconfig'+sync.upper()+' failed (exit '+str(e.returncode)+'): '+e.output.decode('utf-8','replace'))
+         result=''
        else:
         print(opers,sync)
         if 'Add' in str(' '.join(opers)):
@@ -500,7 +504,11 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
        if sync in ['cluip','ipaddr', 'namespace','tz','ntp','gw','dns', 'cf']: 
         cmdline='/TopStor/HostManualconfig'+sync.upper()+" "+" ".join([leader, leaderip, myhost, myhostip]) 
         print('cmdline',cmdline)
-        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        try:
+         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        except subprocess.CalledProcessError as e:
+         print('HostManualconfig'+sync.upper()+' failed (exit '+str(e.returncode)+'): '+e.output.decode('utf-8','replace'))
+         result=''
        else:
         print(opers,sync)
         if 'Add' in str(' '.join(opers)):
