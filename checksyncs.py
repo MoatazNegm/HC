@@ -323,7 +323,7 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
          result=''
        else:
         print(opers,sync)
-        if 'Add' in str(' '.join(opers)):
+        if 'Add' in opers[0]:
             if 'user' in sync:
                print('____________________________________________________________________________________________________________')
                oneusersync('Add',opers[2],'pullsync') 
@@ -511,7 +511,7 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
          result=''
        else:
         print(opers,sync)
-        if 'Add' in str(' '.join(opers)):
+        if 'Add' in opers[0]:
             if 'user' in sync:
                oneusersync('Add',opers[2],'pullavail') 
             else:
