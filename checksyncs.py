@@ -321,9 +321,13 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
         except subprocess.CalledProcessError as e:
          print('HostManualconfig'+sync.upper()+' failed (exit '+str(e.returncode)+'): '+e.output.decode('utf-8','replace'))
          result=''
+       elif sync in ['UsrChange', 'GrpChange']:
+        cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:-1])+' '+'pullsync'
+        print('cmdline',cmdline)
+        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
        else:
         print(opers,sync)
-        if 'Add' in str(' '.join(opers)):
+        if 'Add' in opers[0]:
             if 'user' in sync:
                print('____________________________________________________________________________________________________________')
                oneusersync('Add',opers[2],'pullsync') 
@@ -335,11 +339,6 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
                oneusersync('Del',opers[2],'pullsync') 
             else:
                onegroupsync('Del',opers[2],'pullsync') 
-        elif sync in ['UsrChange', 'GrpChange']:
-            cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:-1])+' '+'pullsync' 
-            print('cmdline',cmdline)
-            result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-        
         else:    #'UnixChange' in opers[0]:
             cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:]) 
             print('cmdline',cmdline)
@@ -509,9 +508,13 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         except subprocess.CalledProcessError as e:
          print('HostManualconfig'+sync.upper()+' failed (exit '+str(e.returncode)+'): '+e.output.decode('utf-8','replace'))
          result=''
+       elif sync in ['UsrChange', 'GrpChange']:
+        cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:-1])+' '+'pullsync'
+        print('cmdline',cmdline)
+        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
        else:
         print(opers,sync)
-        if 'Add' in str(' '.join(opers)):
+        if 'Add' in opers[0]:
             if 'user' in sync:
                oneusersync('Add',opers[2],'pullavail') 
             else:
@@ -521,10 +524,6 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
                oneusersync('Del',opers[2],'pullavail') 
             else:
                onegroupsync('Del',opers[2],'pullavail') 
-        elif sync in ['UsrChange', 'GrpChange']:
-            cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:-1])+' '+'pullsync' 
-            print('cmdline',cmdline)
-            result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
         else:    
             cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:]) 
             print('cmdline',cmdline)
@@ -642,3 +641,4 @@ if __name__=='__main__':
     grpfninit(leader,leaderip, myhost,myhostip)
     usrfninit(leader,leaderip, myhost,myhostip)
     synctypes[sys.argv[1]](leader,leaderip, myhost,myhostip)
+
