@@ -16,8 +16,6 @@ from time import time as timestamp
 from etctocron import etctocron 
 from collectconfig import collectConfig
 
-REBOOT_REQUIRED = False
-
 dirtydic = { 'pool': 0, 'volume': 0 } 
 syncanitem = [ 'getconfig','cversion','priv','dirty','hostdown', 'replipart','evacuatehost','Snapperiod', 'cron','UsrChange', 'GrpChange', 'user','group','nextlead','cluip','ipaddr', 'namespace', 'tz','ntp','gw','dns','cf', 'log', 'bond' ]
 special1 = [ 'passwd' ]
@@ -37,15 +35,25 @@ noinit = [ 'getconfig','cversion', 'replipart' , 'evacuatehost','hostdown','name
 ##### synced template for initial sync for known nodes : sync/Operation/initial/node Operation_stamp #######################
 ##### delete request of same sync if ActivePartners qty reached #######################
 
-def _reboot_if_required():
-    """Checks the global flag and reboots the system if set."""
-    global REBOOT_REQUIRED
-    if REBOOT_REQUIRED:
-        print("checksyncs.py has completed. Executing scheduled reboot for bond changes.")
-        os.sync() 
-        subprocess.run(["/usr/bin/systemctl", "reboot"])
+def signal_reboot_via_etcd(etcd_endpoint, myhost, reason):
+    """
+    Write the etcd key that the running rebootmepls.sh watcher is polling
+    so it will fire /TopStor/docker_setup.sh reboot (which ends in
+    /TopStor/reboot.sh — a container-safe power-cycle analog).
 
-#atexit.register(_reboot_if_required)
+    Do NOT call /TopStor/reboot.sh directly from here: that helper is
+    invoked exactly once per cycle by rebootmepls.sh. Writing the etcd
+    key is the canonical "I need a reboot" signal in this codebase;
+    see syncbonds.sh, Evacuate.py, Evacuatelocal.py for the same
+    pattern. Inside this privileged container, /sbin/reboot or
+    `systemctl reboot` would reboot the HOST kernel, not just us.
+    """
+    key = 'rebootme/' + myhost
+    try:
+        put(etcd_endpoint, key, reason)
+        print(f"[checksyncs] signaled reboot via etcd {etcd_endpoint} key={key} value={reason}")
+    except Exception as exc:
+        print(f"[checksyncs] WARNING: failed to write {key}={reason} to {etcd_endpoint}: {exc}")
 
 software = 'na'
 def insync(leaderip, leader):
@@ -153,8 +161,8 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
         cmdline = f"/TopStor/syncbonds.sh {leaderip}"        
         result = subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
         if result.returncode == 10:
-            print("Bond config changed. Queuing system reboot for after syncs complete.")
-            REBOOT_REQUIRED = True
+            print("Bond config changed. Signaling reboot via etcd for after syncs complete.")
+            signal_reboot_via_etcd(leaderip, myhost, 'pls_fromsyncs')
  if sync not in syncs:
   print('there is a sync that is not defined:',sync)
   return 
@@ -448,8 +456,8 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         cmdline ="/TopStor/syncbonds.sh "+etcdip
         result = subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
         if result.returncode == 10:
-            print("Bond config changed. Queuing system reboot for after syncs complete.")
-            REBOOT_REQUIRED = True
+            print("Bond config changed. Signaling reboot via etcd for after syncs complete.")
+            signal_reboot_via_etcd(etcdip, myhost, 'pls_fromsyncs')
       elif 'getconfig' in sync:
         collectConfig(leaderip, myhost)
       elif sync in 'cversion':
