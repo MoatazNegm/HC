@@ -108,7 +108,7 @@ for ddisk in "${disks[@]}"; do
  idisk=`echo "$diskids" | grep $ddisk`
  echo $currentdisks | grep $devdisk-$myhost &>/dev/null
  if [ $? -ne 0 ]; then
-  pdisk=`ls /dev/disk/by-id/ | grep $idisk | grep -v part | grep scsi | head -1`
+  pdisk=$idisk
   targetcli backstores/block create ${devdisk}-${myhost} /dev/disk/by-id/$pdisk
   flag=1
  else
