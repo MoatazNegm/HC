@@ -4,14 +4,6 @@
 ##########################
 stamp=`date +%s`
 echo $@ > /root/addtargets
-bootdisk='sda'
-bootdiskf='/TopStordata/bootdiskf'
-if [ ! -f $bootdiskf ];
-then
- echo $bootdisk > $bootdiskf
-else
- bootdisk=`cat $bootdiskf`
-fi
 bootpart=`lsblk -o NAME,MOUNTPOINT | grep boot | awk '{print $1}'`
 bootdisk='sd' 
 echo bootdisk is $bootdisk
@@ -32,31 +24,34 @@ declare -a iscsitargets=(`docker exec etcdclient /pace/iscsiclients.py $etcdip |
 currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}')
 #currentdisks=`targetcli ls /iscsi`
 lsblk=$(lsblk -n -o name,serial,vendor)
-disks=(`echo "$lsblk" | grep -vw $bootdisk | grep -v sr0 |  grep -v LIO | awk '{print $1}'`)
-echo disks=${@disks}
-exit
+disks=(`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 |  grep -v LIO | awk '{print $1}'`)
 nodes=(`docker exec etcdclient /TopStor/etcdgetlocal.py Active --prefix | awk -F'Partners/' '{print $2}' | awk -F"'" '{print $1}'`)
 diskids=`echo "$lsblk" | grep -vw $bootdisk | grep -v sr0 | grep -v LIO | awk '{print $1" "$2}'`
 mappedhosts=`echo "$currentdisks" | grep Mapped`;
 blocks=$(echo "$initialt" | awk '/^  \| o- block /{flag=1} flag; /^  \| o- fileio /{flag=0}')
 targets=`echo "$blocks" | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}'`
+echo all: $targets, ${blocks[*]}, $mappedhosts,${diskids}, $nodes
 #blocks=`targetcli ls backstores/block `
 # filter the new iscsi disks that were not part of the backstore , then create them if needed
 flag=0
 for ddisk in  "${disks[@]}"; do
+	echo ddisk $ddisk
+	echo the disk $ddisk not a part in the targets
+	ordinary=`lsscsi -i | grep -w $ddisk | grep -v LIO | awk '{print $NF}'`
+	#scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi | grep -v LIO | grep -v SLS | awk '{print $9}'`
+	scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi-$ordinary | awk '{print $9}'`
+	targetcli backstores/block create ${ddisk}-${myhost} /dev/disk/by-id/$scsidisk
+	echo scsidisk=$scsidisk, ordinary=$ordinary
+	echo targetcli backstores/block create ${ddisk}-${myhost} /dev/disk/by-id/$scsidisk
 	if [ $? -ne 0 ];
 	then
-		echo the disk $ddisk not a part in the targets
-		ordinary=`lsscsi -i | grep -w $ddisk | grep -v LIO | awk '{print $NF}'`
-		#scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi | grep -v LIO | grep -v SLS | awk '{print $9}'`
-		scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi-$ordinary | awk '{print $9}'`
-  		targetcli backstores/block create ${ddisk}-${myhost} /dev/disk/by-id/$scsidisk
-		flag=1
-		
-	else
 		echo the disk $ddisk is a part in the targets backstore
+	else
+		flag=1
 	fi
 done
+echo 111111111111111111111
+exit
 declare -a newdisks=();
 # check and create the t1 entry of myhost
 if [ $flag -eq 1 ];
