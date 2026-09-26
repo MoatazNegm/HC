@@ -26,23 +26,23 @@ currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}'
 lsblk=$(lsblk -n -o name,serial,vendor)
 disks=(`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 |  grep -v LIO | awk '{print $1}'`)
 nodes=(`docker exec etcdclient /TopStor/etcdgetlocal.py Active --prefix | awk -F'Partners/' '{print $2}' | awk -F"'" '{print $1}'`)
-diskids=`echo "$lsblk" | grep -vw $bootdisk | grep -v sr0 | grep -v LIO | awk '{print $1" "$2}'`
+diskids=`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 | grep -v LIO | awk '{print $1" "$2}'`
 mappedhosts=`echo "$currentdisks" | grep Mapped`;
 blocks=$(echo "$initialt" | awk '/^  \| o- block /{flag=1} flag; /^  \| o- fileio /{flag=0}')
 targets=`echo "$blocks" | grep -v deactivated |  grep dev | awk -F'[' '{print $2}' | awk '{print $1}'`
-echo all: $targets, ${blocks[*]}, $mappedhosts,${diskids}, $nodes
 #blocks=`targetcli ls backstores/block `
 # filter the new iscsi disks that were not part of the backstore , then create them if needed
 flag=0
 for ddisk in  "${disks[@]}"; do
 	echo ddisk $ddisk
 	echo the disk $ddisk not a part in the targets
-	ordinary=`lsscsi -i | grep -w $ddisk | grep -v LIO | awk '{print $NF}'`
+	ordinary=${ddisk}$myhost
 	#scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi | grep -v LIO | grep -v SLS | awk '{print $9}'`
-	scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi-$ordinary | awk '{print $9}'`
-	targetcli backstores/block create ${ddisk}-${myhost} /dev/disk/by-id/$scsidisk
+	scsidisk='scsi-'$ordinary
+	ln -s /dev/$ddisk /dev/disk/by-id/$scsidisk
 	echo scsidisk=$scsidisk, ordinary=$ordinary
-	echo targetcli backstores/block create ${ddisk}-${myhost} /dev/disk/by-id/$scsidisk
+	echo targetcli backstores/block create ${ddisk}-${myhost} /dev/$ddisk
+	targetcli backstores/block create ${ddisk}-${myhost} /dev/$ddisk
 	if [ $? -ne 0 ];
 	then
 		echo the disk $ddisk is a part in the targets backstore
@@ -50,8 +50,6 @@ for ddisk in  "${disks[@]}"; do
 		flag=1
 	fi
 done
-echo 111111111111111111111
-exit
 declare -a newdisks=();
 # check and create the t1 entry of myhost
 if [ $flag -eq 1 ];
@@ -78,7 +76,6 @@ then
 	currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}')
 	flag=0
 fi
-
 #tpgs1=(`targetcli ls /iscsi | grep iqn`) 
 # check if my ip was changed so I have a wrong tpg1, of it my tpg was not created before. so I create the write tpg 
 echo "$currentdisks" | grep $myip:3266 &>/dev/null
@@ -105,9 +102,10 @@ fi
 targetcli /iscsi/iqn.2016-03.com.${myhost}:t1 set global auto_add_mapped_luns=true
 i=0;
 # check if there is a new disk to create it as devdisk-myhsot in the backstore block
+diskids=$(ls /dev/disk/by-id/)
 for ddisk in "${disks[@]}"; do
  devdisk=$ddisk 
- idisk=`echo "$diskids" | grep -w $ddisk | awk '{print $2}'`
+ idisk=`echo "$diskids" | grep $ddisk`
  echo $currentdisks | grep $devdisk-$myhost &>/dev/null
  if [ $? -ne 0 ]; then
   pdisk=`ls /dev/disk/by-id/ | grep $idisk | grep -v part | grep scsi | head -1`
@@ -117,7 +115,6 @@ for ddisk in "${disks[@]}"; do
   echo $devdisk-$myhost is already created in the backstores/block 
  fi
 done;
-#######check if one of the hosts is new and was not mapped before
 if [ $flag -eq 1 ];
 then
 	initialt=`targetcli ls`
@@ -158,6 +155,7 @@ for node in "${nodes[@]}"; do
 	done
  done
 done
+#######check if one of the hosts is new and was not mapped before
 #echo hi8 >> /root/targetadd
 targetcli /iscsi/iqn.2016-03.com.${myhost}:t1 set global auto_add_mapped_luns=false
 
