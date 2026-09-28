@@ -83,22 +83,24 @@ def hostlost(host, hostip):
 
 
 def hostfound(host, hostip):
-                """Recovery path: a peer that was previously hostlost() is reachable again.
-                Re-publish the four membership keys that hostlost() deletes, and trigger
-                the peer's own republish path so its disk/pool records come back too."""
-                global etcd, leader ,leaderip, myhost, myhostip
-                with open('/root/heartproblem','a') as f:
-                        f.write('recovery:\n'+host+' '+hostip+'\n')
-                put(etcd, 'ready/'+host, hostip)
-                put(etcd, 'known/'+host, hostip)
-                put(etcd, 'running/'+host, hostip)
-                put(etcd, 'host/'+host, hostip)
-                cmdline='/pace/hostfound.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+host+' '+hostip
-                try:
-                        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                except Exception as e:
-                        with open('/root/heartproblem','a') as f:
-                                f.write('recovery-script-failed: '+str(e)+'\n')
+	"""Recovery path: a peer that was previously hostlost() is reachable again.
+	Re-publish the four membership keys that hostlost() deletes, and trigger
+	the peer's own republish path so its disk/pool records come back too."""
+	global etcd, leader ,leaderip, myhost, myhostip
+	with open('/root/heartproblem','a') as f:
+		f.write('recovery:\\n'+host+' '+hostip+'\\n')
+	put(etcd, 'ready/'+host, hostip)
+	put(etcd, 'known/'+host, hostip)
+	put(etcd, 'running/'+host, hostip)
+	put(etcd, 'host/'+host, hostip)
+	cmdline='/pace/hostfound.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+host+' '+hostip
+	try:
+		result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+	except Exception as e:
+		with open('/root/heartproblem','a') as f:
+			f.write('recovery-script-failed: '+str(e)+'\\n')
+
+
 def heartbeat(*args):
     global etcd, leader ,leaderip, myhost, myhostip
     cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leader'
@@ -134,22 +136,22 @@ def heartbeat(*args):
         if tries < 10: 
            hostlost(leader, leaderip)
 
-        # Recovery: ActivePartners that are NOT in knowns were hostlost'd earlier.
-        # Nmap them and re-publish membership keys if they're reachable again.
-        try:
-            partners = get(etcd, 'ActivePartners', '--prefix')
-            known_hosts = set(known[0].split('/')[1] for known in knowns)
-            for partner in partners:
-                phost = partner[0].split('/')[1]
-                pip = partner[1]
-                if phost == myhost or phost in known_hosts:
-                    continue
-                cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+pip
-                res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                if ('Host is up' or 'open') in res:
-                    hostfound(phost, pip)
-        except Exception:
-            pass
+	# Recovery: ActivePartners that are NOT in knowns were hostlost'd earlier.
+	# Nmap them and re-publish membership keys if they're reachable again.
+	try:
+		partners = get(etcd, 'ActivePartners', '--prefix')
+		known_hosts = set(known[0].split('/')[1] for known in knowns)
+		for partner in partners:
+			phost = partner[0].split('/')[1]
+			pip = partner[1]
+			if phost == myhost or phost in known_hosts:
+				continue
+			cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+pip
+			res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+			if ('Host is up' or 'open') in res:
+				hostfound(phost, pip)
+	except Exception:
+		pass
         for known in knowns:
             host = known[0].split('/')[1]
             if host == myhost:
