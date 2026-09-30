@@ -11,10 +11,10 @@ def etcdctl(etcd, key,prefix):
  cmdline=['etcdctl','--user=root:YN-Password_123','--endpoints=http://'+etcd+':2379','get',key,prefix]
  cmdline=['etcdctl','--endpoints=http://'+etcd+':2379','get',key,prefix]
  try:
-    result=subprocess.run(cmdline,stdout=subprocess.PIPE, timeout=2)
+    result=subprocess.run(cmdline,stdout=subprocess.PIPE, timeout=10)
     return result 
  except:
-    print('not reachable')
+    print('not reachable', file=sys.stderr)
     return '_1' 
 def etcdget(etcd, key, prefix=''):
  result = etcdctl(etcd, key,prefix)
