@@ -39,7 +39,7 @@ for ddisk in  "${disks[@]}"; do
 	ordinary=${ddisk}$myhost
 	#scsidisk=`ls -l /dev/disk/by-id/ | grep -w $ddisk | grep -v part | grep scsi | grep -v LIO | grep -v SLS | awk '{print $9}'`
 	scsidisk='scsi-'$ordinary
-	ln -s /dev/$ddisk /dev/disk/by-id/$scsidisk > /dev/null
+	ln -s /dev/$ddisk /dev/disk/by-id/$scsidisk 2> /dev/null
 	echo scsidisk=$scsidisk, ordinary=$ordinary
 	echo targetcli backstores/block create ${ddisk}-${myhost} /dev/$ddisk
 	targetcli backstores/block create ${ddisk}-${myhost} /dev/$ddisk
