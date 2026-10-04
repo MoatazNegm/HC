@@ -1,4 +1,6 @@
 #!/usr/bin/sh
+# container flavour: skip while another container owns iscsid (see /TopStor/iscsidowner.sh)
+[ -f /TopStor/iscsidowner.sh ] && . /TopStor/iscsidowner.sh && iscsid_foreign && { echo "$0: iscsid is owned by another container - nothing to do here"; exit 0; }
 
 etcdip=`echo $@ | awk '{print $1}'`
 myhost=`echo $@ | awk '{print $2}'`
