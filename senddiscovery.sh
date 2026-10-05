@@ -17,6 +17,6 @@ do
 done
 echo will join the cluster $clusterip
 echo yes_fromsenddtarget > /root/nodeconfigured
-nmcli conn mod mycluster ipv4.addresses $clusterip 
+echo $clusterip > /root/newcaddr
 ./etcddel.py 10.11.11.253 possible/$myhost
 /TopStor/docker_setup.sh reboot
