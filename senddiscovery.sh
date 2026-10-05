@@ -14,6 +14,8 @@
 # The whole script is one block so sh has parsed it completely before it runs: the pull below
 # replaces /pace and /TopStor, this file included.
 {
+# everything this script says goes to a log (it is started in the background, nothing else shows it)
+exec >> /root/senddiscovery.log 2>&1
 cd /pace
 disc=10.11.11.253
 myhost=`hostname`
