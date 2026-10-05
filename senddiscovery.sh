@@ -66,6 +66,9 @@ else
 	echo no software to pull from the primary .... joining with the local software
 fi
 cd /pace
-/TopStor/docker_setup.sh reboot
+# restart through docker_setup.sh in its own session, detached from this script: resetdocker.sh starts
+# with `pkill send`, which kills this very script, and a restart must not die with its parent
+setsid nohup /TopStor/docker_setup.sh reboot >> /root/senddiscovery.log 2>&1 < /dev/null &
+disown 2>/dev/null
 exit
 }
