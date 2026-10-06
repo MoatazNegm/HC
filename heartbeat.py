@@ -96,7 +96,16 @@ def hostlost(host, hostip):
                         put(leaderip,'sync/hostdown/'+host+'_/request/'+myhost,'hostdown_'+stampit)
                     put(etcd,'refreshdisown/'+myhost,'yes')
                     result='failed'
+                    # wait for the cluster ip to answer again, but never for ever: after 5 minutes give up
+                    # and go back to the main loop (it used to spin here, without a pause, until a restart)
+                    waituntil = stamp() + 300
                     while 'ok' not in str(result):
+                        if stamp() > waituntil:
+                            print('no leader answers on', leaderip, 'after 5 minutes .... back to the main loop')
+                            with open('/root/heartproblem','a') as f:
+                                f.write('\nno new leader on '+leaderip+' after 300s\n')
+                            break
+                        sleep(1)
                         print('chceking new leader')
                         cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+leaderip 
                         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
