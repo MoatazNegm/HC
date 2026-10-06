@@ -44,14 +44,36 @@ swbranch=`joinfield br`
 joints=`joinfield ts`
 echo will join the cluster: ip=$newip cip=$newcip alias=$newalias sw=$swip br=$swbranch ts=$joints
 
+# acknowledge first, and confirm it actually landed: etcdput.py swallows unreachable-etcd errors
+# (it always "succeeds" even when the put never happened), so the only proof is reading it back.
+# /root/nodeconfigured must not be written until this is confirmed: iscsiwatchdog.sh only starts
+# this script when that file does not already say yes, so writing it on an unconfirmed ack would
+# strand the node here forever with no acknowledgment ever sent and nothing left to retry it.
+acked=0
+for attempt in 1 2 3 4 5
+do
+	/pace/etcdput.py $disc ackjoin/$myhost $joints >/dev/null
+	if [ "`/pace/etcdget.py $disc ackjoin/$myhost`" = "$joints" ];
+	then
+		acked=1
+		break
+	fi
+	echo ackjoin not confirmed yet, retrying attempt $attempt
+	sleep 2
+done
+if [ $acked -ne 1 ];
+then
+	echo could not confirm ackjoin after retries, giving up without marking this node configured
+	exit 1
+fi
+
 echo yes_fromsenddtarget > /root/nodeconfigured
 rm -f /root/newipaddr /root/newalias
 [ -n "$newip" ] && echo $newip > /root/newipaddr
 echo $newcip > /root/newcaddr
 [ -n "$newalias" ] && echo $newalias > /root/newalias
 
-# acknowledge: the files are in place. The node leaves the discovery list; only the ack stays.
-/pace/etcdput.py $disc ackjoin/$myhost $joints
+# the files are in place and the ack is confirmed. The node leaves the discovery list; only the ack stays.
 /pace/etcddel.py $disc tojoin/$myhost >/dev/null
 /pace/etcddel.py $disc possible/$myhost >/dev/null
 
