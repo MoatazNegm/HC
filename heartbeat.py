@@ -22,19 +22,52 @@ def dosync(*args):
 
 
 
+def splitnext(value):
+ # nextlead/er is '<host>/<ip>', written by the leader (see leadernextlead).  Older branches wrote the bare
+ # host name; a value without a host in it ('None', '_1', '-1') means there is no next leader.
+ value = str(value)
+ if 'dhcp' not in value:
+  return '', ''
+ parts = value.split('/')
+ return parts[0], (parts[1] if len(parts) > 1 else '')
+
 def getnextlead():
+ # read only: a node never announces itself, the leader names the next leader and syncs it to every node
  global etcd, leader ,leaderip, myhost, myhostip, nextleader, nextleaderip
- nextleader =  get(etcd,'nextlead/er')[0]
- if '_1' in str(nextleader):
-  put(leaderip, 'nextlead/er',myhost)
-  stampit = str(stamp())
-  dels(leaderip,'sync/nextlead/Add_er','--prefix')
-  dosync('sync/nextlead/Add_er_'+myhost+'/request','nextlead_'+stampit)
-  nextleader = leader 
-  nextleaderip = leaderip
- else:
-  nextleaderip = get(etcd,'ready/'+nextleader)[0]
+ nextleader, nextleaderip = splitnext(get(etcd,'nextlead/er')[0])
+ if nextleader and not nextleaderip:
+  nextleaderip = str(get(etcd,'ready/'+nextleader)[0])
  return nextleader , nextleaderip
+
+readyseen = None
+
+def leadernextlead(knowns):
+ # LEADER ONLY.  The leader names the next leader: a node that has just become ready, or -- when the
+ # current one is not a ready node any more (lost, evacuated, this node itself after a take over, None) --
+ # another ready node.  It writes nextlead/er = '<host>/<ip>' and posts the sync request (the request and
+ # the leader's own done mark), so the checksyncs looper of every node copies it into its local etcd.
+ global etcd, leader ,leaderip, myhost, myhostip, readyseen
+ others = [ (k[0].split('/')[1], str(k[1])) for k in knowns if 'ready/' in str(k[0]) and k[0].split('/')[1] != myhost ]
+ names = [ o[0] for o in others ]
+ new = [] if readyseen is None else [ o for o in others if o[0] not in readyseen ]
+ readyseen = set(names)
+ if len(others) == 0:
+  return
+ current = str(get(leaderip,'nextlead/er')[0])
+ curhost, curip = splitnext(current)
+ if len(new) > 0:
+  choice = new[-1]
+ elif curhost not in names:
+  choice = others[-1]
+ else:
+  choice = [ o for o in others if o[0] == curhost ][0]
+ value = choice[0]+'/'+choice[1]
+ if current == value:
+  return
+ print('next leader is now', value, 'it was', current)
+ put(leaderip, 'nextlead/er', value)
+ dels(leaderip,'sync/nextlead/Add_er','--prefix')
+ dosync('sync/nextlead/Add_er_'+choice[0]+'::'+choice[1]+'/request','nextlead_'+str(stamp()))
 
 def hostlost(host, hostip):
                 global etcd, leader ,leaderip, myhost, myhostip, nextleader, nextleaderip
@@ -48,9 +81,12 @@ def hostlost(host, hostip):
                     dels(myhostip, 'pools',host)
                     dels(myhostip, 'vol',host)
                     print('leader lost. nextleader is ',nextleader, 'while my host',myhost)
-                    nextleader =  get(etcd,'nextlead/er')[0]
-                    leader = nextleader 
-                    put(myhostip,'leader',leader)
+                    nextleader, nextleaderip =  splitnext(get(etcd,'nextlead/er')[0])
+                    if nextleader:
+                        if not nextleaderip:
+                            nextleaderip = myhostip if nextleader == myhost else str(get(etcd,'ready/'+nextleader)[0])
+                        leader = nextleader 
+                        put(myhostip,'leader',leader)
                     if myhost == nextleader:
                         cmdline='/pace/leaderlost.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+nextleader+' '+nextleaderip+' '+clusterip+' '+host
                         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
@@ -115,6 +151,8 @@ def heartbeat(*args):
         knownsn = len(knowns)
         if tries < 10: 
            hostlost(leader, leaderip)
+        elif myhost == leader:
+           leadernextlead(knowns)
         for known in knowns:
             host = known[0].split('/')[1]
             if host == myhost:
