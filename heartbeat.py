@@ -76,7 +76,8 @@ def hostlost(host, hostip):
 
                 stampit = str(stamp())
                 port = myport = '2379'
-                clusterip = get(leaderip,'namespace/mgmtip')[0]
+                # from this node's own etcd: asking the lost leader's etcd only waited 2 s for the timeout and returned nothing
+                clusterip = get(etcd,'namespace/mgmtip')[0]
                 if host == leader:
                     dels(myhostip, 'pools',host)
                     dels(myhostip, 'vol',host)
