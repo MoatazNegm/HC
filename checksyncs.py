@@ -173,14 +173,20 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
 
 def syncall(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  global syncs, syncanitem, forReceivers, etcdonly, allsyncs
+ # The requests that are pending NOW are covered by the initial syncs below (those copy the leader's
+ # current keys), so they are marked done without being applied.  The list must be taken BEFORE the
+ # initial syncs: a request posted while they run (this node's own nextlead announcement at the end of
+ # docker_setup.sh, for one) is not covered by a copy that was already made, and marking it done lost it --
+ # the node then kept nextlead/er = None and never took over when the leader died.  Such a request now
+ # stays pending and the syncrequest looper applies it.
+ allrequests = get(leaderip,'sync','--prefix')
+ otherrequests = [ x for x in allrequests if '/request/dhcp' not in str(x) and 'initial' not in str(x) ] 
+
  allinitials = get(leaderip,'sync','initial')
  myinitials = [ x for x in allinitials if 'initial' in str(x)  and '/request/dhcp' not in str(x) ] 
  for syncinfo in myinitials:
    doinitsync(leader,leaderip,myhost,myhostip, syncinfo,pullsync)
 
- allrequests = get(leaderip,'sync','--prefix')
- otherrequests = [ x for x in allrequests if '/request/dhcp' not in str(x) and 'initial' not in str(x) ] 
- 
  for done in otherrequests:
       put(leaderip,done[0]+'/'+myhost,done[1])
       synckeys(leaderip,myhostip, done[0], done[0]) 
