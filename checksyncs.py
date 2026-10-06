@@ -350,8 +350,11 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
       #cmdline='/TopStor/'+opers[0].split(':')[1]+' '+result+' '+opers[2] +' '+ opers[3]
       #result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
    if sync not in syncs:
+    # skip it, never stop: a 'return' here dropped every later request on every pass.  A node that came
+    # back after a fail over met an old sync/cversion request first (not handled here any more) and so
+    # never applied anything again -- stale nextlead/er, cluster never in sync.
     print('there is a sync that is not defined:',sync)
-    return
+    continue
    if flag == 1 and evacuateflag == 0:
     print(';;;;;;;;;;;;;;;;;;;;updating the remote leader')
     putnoport(leaderip,pport,syncleft+'/dhcp'+myalias, stamp)
@@ -534,8 +537,11 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
       #cmdline='/TopStor/'+opers[0].split(':')[1]+' '+result+' '+opers[2] +' '+ opers[3]
       #result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
    if sync not in syncs:
+    # skip it, never stop: a 'return' here dropped every later request on every pass.  A node that came
+    # back after a fail over met an old sync/cversion request first (not handled here any more) and so
+    # never applied anything again -- stale nextlead/er, cluster never in sync.
     print('there is a sync that is not defined:',sync)
-    return
+    continue
    if flag == 1 and evacuateflag == 0:
     if 'sync' in pullsync:
         put(leaderip,pullsync+syncleft+'/'+myhost, stamp)
