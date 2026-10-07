@@ -181,7 +181,9 @@ def zpooltoimport(*args):
         nxthost=selecthost(poolinfo,readies)
         print('nxthosts',nxthost)
         poolnxt=get(leaderip,'poolnxt/'+pool)[0]
-        if poolnxt in str(nxthost):
+        # exact comparison: "poolnxt in str(nxthost)" was True for an EMPTY stored value ('' is a substring of every
+        # string), so a pool whose poolnxt had been emptied was never assigned to a node again and never imported
+        if poolnxt == nxthost:
             continue 
         print('adding')
         #dels(leaderip,'poolnxt/'+pool)
