@@ -48,6 +48,17 @@ currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}'
 #currentdisks=`targetcli ls /iscsi`
 lsblk=$(lsblk -n -o name,serial,vendor)
 disks=(`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 |  grep -v LIO | awk '{print $1}'`)
+# container flavour: /root/loopdisks lists the only disks this node may export (the nodes of several clusters share
+# the host's loop devices).  No file = every disk, as before.
+[ -f /TopStor/flavor.sh ] && . /TopStor/flavor.sh
+if [ -s /root/loopdisks ] && is_container 2>/dev/null; then
+	alloweddisks=(`cat /root/loopdisks`)
+	keep=()
+	for d in "${disks[@]}"; do
+		for a in "${alloweddisks[@]}"; do [ "$d" = "$a" ] && keep+=($d); done
+	done
+	disks=("${keep[@]}")
+fi
 nodes=(`docker exec etcdclient /TopStor/etcdgetlocal.py Active --prefix | awk -F'Partners/' '{print $2}' | awk -F"'" '{print $1}'`)
 diskids=`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 | grep -v LIO | awk '{print $1" "$2}'`
 mappedhosts=`echo "$currentdisks" | grep Mapped`;
