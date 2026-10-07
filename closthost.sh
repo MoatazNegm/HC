@@ -48,14 +48,23 @@ for p in $orphans; do
 		sleep 2; n=$((n+2))
 	done
 	log "pool $p: disks back after ${n}s (missing=$missing)"
-	# 3. resume and export
+	# 3. resume and export -- but NEVER export a pool that is not healthy again: "zpool export" on a suspended
+	#    pool does not return and keeps ZFS's global lock, which blocks every zpool/zfs command on the host until a
+	#    reboot.  So: all disks back, zpool clear, state ONLINE and a test write, only then the export.
+	if [ $missing -ne 0 ]; then
+		log "pool $p: $missing disk(s) did not come back -- left as it is, NOT exported"
+		continue
+	fi
 	timeout 60 zpool clear $p >/dev/null 2>&1
-	sleep 1
-	if timeout 120 zpool export $p >> /root/closthost.log 2>&1; then
+	n=0; while [ $n -lt 30 ] && [ "`cat /proc/spl/kstat/zfs/$p/state 2>/dev/null`" != "ONLINE" ]; do sleep 2; n=$((n+2)); timeout 60 zpool clear $p >/dev/null 2>&1; done
+	if [ "`cat /proc/spl/kstat/zfs/$p/state 2>/dev/null`" != "ONLINE" ] || ! timeout 30 zfs set topstor:resumed=`date +%s` $p >/dev/null 2>&1; then
+		log "pool $p: state `cat /proc/spl/kstat/zfs/$p/state 2>/dev/null`, a test write failed -- NOT exported"
+		continue
+	fi
+	if zpool export $p >> /root/closthost.log 2>&1; then
 		log "pool $p exported -- it can be imported by the node the leader names"
 	else
-		timeout 60 zpool clear $p >/dev/null 2>&1
-		timeout 120 zpool export -f $p >> /root/closthost.log 2>&1 && log "pool $p exported (second try)" || log "pool $p could NOT be exported"
+		log "pool $p: export refused (see above) -- left imported"
 	fi
 done
 log "done"
