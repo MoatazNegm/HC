@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 import subprocess, sys
 import os
-from ioperf import ioperf
 from logqueue import queuethis, initqueue
 from etcdput import etcdput as put
 from etcdgetpy import etcdget as get 
@@ -91,7 +90,6 @@ def zpooltoimport(*args):
    pool = poolline[0].replace('poolnxt/','')
    if pool in str(pools):
     continue
-   ioperf(leaderip, myhost)
    print('pool to be imported now', pool)
    poolid = get(leaderip,'ActPool/'+pool)[0]
    if poolid == '_1':
@@ -206,9 +204,3 @@ if __name__=='__main__':
     initqueue(leaderip, myhost) 
     initgetpoolstoimport(leader,leaderip,myhost,myhostip)
     zpooltoimport('hi')
- #cmdline='cat /pacedata/perfmon'
- #perfmon=str(subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout)
- #if '1' in perfmon:
- # queuethis('zpooltoimport.py','start','system')
- #if '1' in perfmon:
- # queuethis('zpooltoimport.py','stop','system')

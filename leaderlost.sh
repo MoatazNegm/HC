@@ -32,10 +32,6 @@ echo /TopStor/docker_primary.sh $leader $myhostip $leaderip $clusterip
 ( n=0; until curl -s -m 2 -o /dev/null http://$leaderip:5001/ || [ $n -ge 30 ]; do sleep 2; n=$((n+1)); done; /TopStor/promserver.sh $leaderip ) >/dev/null 2>&1 </dev/null &
 echo docker exec etcdclient /TopStor/logmsg.py Partst05 info system $myhost 
 docker exec etcdclient /TopStor/logmsg.py Partst05 info system $myhost 
-echo $perfmon | grep 1
-if [ $? -eq 0 ]; then
- docker exec etcdclient /TopStor/logqueue.py AddingMePrimary start system 
-fi
 stamp=`date +%s%N`
 docker exec etcdclient /TopStor/logmsg.py Partst02 warning system $losthost
 /pace/etcddel.py $leaderip sync/leader/Add --prefix
