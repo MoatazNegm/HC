@@ -21,6 +21,11 @@ flock -n 9 || { log "another run is in progress"; exit 0; }
 log "start"
 # pools of the lost host, read before anything is touched
 orphans=`/pace/cpoolowner.sh mine $lost`
+# a pool that is already SUSPENDED cannot be asked for its owner; with its disks gone it is the lost host's by definition
+for sp in `ls /proc/spl/kstat/zfs 2>/dev/null | grep '^pdhcp'`; do
+	[ "`cat /proc/spl/kstat/zfs/$sp/state 2>/dev/null`" = "ONLINE" ] || orphans="$orphans $sp"
+done
+orphans=`echo $orphans | tr ' ' '\n' | sort -u | tr '\n' ' '`
 log "its pools: ${orphans:-none}"
 # 1. the target side it left behind
 if targetcli ls /iscsi 2>/dev/null | grep -q "iqn.2016-03.com.$lost:t1"; then

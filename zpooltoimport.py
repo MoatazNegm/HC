@@ -44,6 +44,18 @@ def selecthost(poolinfo,readies):
         #    selectedhost[1] = selectedhost[1] + [ host ]
     return selectedhost
         
+def poolonline(pool):
+ # "zpool reguid / export / import ..." wait for a transaction group.  On a SUSPENDED pool (its disks are gone) that
+ # wait never ends, in the kernel (state D, not killable), and it holds ZFS's global lock: after that every zpool /
+ # zfs command on the host hangs until the host is rebooted (seen on 2026-10-07, twice).  So such a pool is left
+ # alone here; /pace/closthost.sh (container flavour) gives it its disks back and resumes it first.
+ try:
+  with open('/proc/spl/kstat/zfs/'+pool+'/state') as f:
+   return f.read().strip() == 'ONLINE'
+ except OSError:
+  return False
+
+
 def zpooltoimport(*args):
  global leader, leaderip, myhost, myhostip, etcdip
  if args[0]=='init':
@@ -69,7 +81,7 @@ def zpooltoimport(*args):
  for poo in poouids:
     print('poouids start')
     pool=poo[0].split('/')[1]
-    if pool in str(mypools):
+    if pool in str(mypools) and poolonline(pool):
         cmdline = 'zpool reguid '+pool
         result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
         if result.returncode == 0:
@@ -104,7 +116,7 @@ def zpooltoimport(*args):
    cmdline= '/usr/sbin/zpool status  '
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    print('result',result)
-   if pool in result:
+   if pool in result and poolonline(pool):
     cmdline = 'zpool reguid '+pool
     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
     if result.returncode == 0:
