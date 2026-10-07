@@ -1,4 +1,18 @@
 #!/usr/bin/bash
+# setproduct <backstore name>: the SCSI product id the initiators see (lsscsi model column) is "<disk>-<host>", and
+# every reader takes the host from it.  LIO's default cuts the name to 15 characters, so "loop1-dhcp328043" lost the
+# last digit of the host name and the disks belonged to a host that does not exist.  The field holds 16, and it can
+# only be written before the backstore is exported -- so right after it is created.  (17 or more, e.g. loop10-<host>,
+# cannot fit: more than nine loop disks per node need a shorter device name.)
+setproduct() {
+	if [ ${#1} -le 16 ]; then
+		for pf in /sys/kernel/config/target/core/*/$1/wwn/product_id; do
+			[ -w "$pf" ] && echo -n "$1" > "$pf" 2>/dev/null
+		done
+	else
+		echo "setproduct: $1 is longer than 16 characters, the host name in it will be cut"
+	fi
+}
 ######################
 #exit
 ##########################
@@ -43,6 +57,7 @@ for ddisk in  "${disks[@]}"; do
 	echo scsidisk=$scsidisk, ordinary=$ordinary
 	echo targetcli backstores/block create ${ddisk}-${myhost} /dev/$ddisk
 	targetcli backstores/block create ${ddisk}-${myhost} /dev/$ddisk
+	setproduct ${ddisk}-${myhost}
 	if [ $? -ne 0 ];
 	then
 		echo the disk $ddisk is a part in the targets backstore
@@ -110,6 +125,7 @@ for ddisk in "${disks[@]}"; do
  if [ $? -ne 0 ]; then
   pdisk=$idisk
   targetcli backstores/block create ${devdisk}-${myhost} /dev/disk/by-id/$pdisk
+  setproduct ${devdisk}-${myhost}
   flag=1
  else
   echo $devdisk-$myhost is already created in the backstores/block 
