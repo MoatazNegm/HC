@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import subprocess, sys
+import os
 from ioperf import ioperf
 from logqueue import queuethis, initqueue
 from etcdput import etcdput as put
@@ -117,6 +118,18 @@ def zpooltoimport(*args):
     dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+guid+'/request','actpool_'+str(stamp()))
     dels(etcdip, 'poouids/'+pool) 
 
+    # container flavour: the pool is visible in every node (one kernel), its owner is written on the pool
+    if os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10'):
+        subprocess.run(['/pace/cpoolowner.sh','set',myhost,pool])
+    # the cache (L2ARC) must sit on the node that owns the pool: a cache disk of another -- or a lost -- node is
+    # replaced by a local one.  DGsetPool did this for a manual import only; a pool taken over after its owner
+    # died comes through here.
+    try:
+        res = subprocess.run(['/usr/bin/python3','/TopStor/fixcachelocality.py',leaderip,pool,myhost],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
+        with open('/root/fixcachelocality.log','a') as f:
+            f.write(str(stamp())+' '+pool+' '+myhost+'\n'+res.stdout.decode('utf-8','replace')+'\n')
+    except Exception as e:
+        print('fixcachelocality failed:',e)
     put(etcdip, 'dirty/volume','0')
     #put(etcdip, 'poouids/'+pool,myhost)
     print('before sync')

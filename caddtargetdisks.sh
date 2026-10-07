@@ -1,4 +1,13 @@
 #!/usr/bin/bash
+# diskserial <device name>: a serial for the LIO backstore that depends on the DISK only, so the same shared disk
+# has the same SCSI id (naa.6001405<serial>) whichever node exports it -- as a real shared disk has one WWN.
+# With LIO's default (a random serial per backstore) a pool lost all its disks' names when another node took the
+# disks over.  For a loop device the identity is its backing file; otherwise the device name.
+diskserial() {
+	ident=`losetup -n -O BACK-FILE /dev/$1 2>/dev/null | tr -d ' '`
+	[ -z "$ident" ] && ident=$1
+	echo -n "$ident" | md5sum | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\).*/\1-\2-\3-\4-\5/'
+}
 # setproduct <backstore name>: the SCSI product id the initiators see (lsscsi model column) is "<disk>-<host>", and
 # every reader takes the host from it.  LIO's default cuts the name to 15 characters, so "loop1-dhcp328043" lost the
 # last digit of the host name and the disks belonged to a host that does not exist.  The field holds 16, and it can
@@ -56,7 +65,7 @@ for ddisk in  "${disks[@]}"; do
 	ln -s /dev/$ddisk /dev/disk/by-id/$scsidisk 2> /dev/null
 	echo scsidisk=$scsidisk, ordinary=$ordinary
 	echo targetcli backstores/block create ${ddisk}-${myhost} /dev/$ddisk
-	targetcli backstores/block create ${ddisk}-${myhost} /dev/$ddisk
+	targetcli backstores/block create name=${ddisk}-${myhost} dev=/dev/$ddisk wwn=`diskserial $ddisk`
 	setproduct ${ddisk}-${myhost}
 	if [ $? -ne 0 ];
 	then
@@ -124,7 +133,7 @@ for ddisk in "${disks[@]}"; do
  echo $currentdisks | grep $devdisk-$myhost &>/dev/null
  if [ $? -ne 0 ]; then
   pdisk=$idisk
-  targetcli backstores/block create ${devdisk}-${myhost} /dev/disk/by-id/$pdisk
+  targetcli backstores/block create name=${devdisk}-${myhost} dev=/dev/disk/by-id/$pdisk wwn=`diskserial $devdisk`
   setproduct ${devdisk}-${myhost}
   flag=1
  else

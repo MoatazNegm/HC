@@ -35,8 +35,13 @@ def ioperf(leaderip,myhost):
  for dsk in disks:
   thedsk = disks[dsk]
   put(leaderip, 'dskperf/'+myhost+'/'+thedsk['name'], str(thedsk['tps'])+'/'+str(thedsk['throuput'])+'/'+str(thedsk['read'])+'/'+dsk)
-  with open('/pacedata/perfmon') as f:
-   perfmon = f.readline()
+  # the file is not there on every node; without it this raised, and zpooltoimport.py -- which calls ioperf
+  # right before 'zpool import' -- never imported a pool
+  try:
+   with open('/pacedata/perfmon') as f:
+    perfmon = f.readline()
+  except OSError:
+   perfmon = '0'
   #if '1' in perfmon:
   with open('/TopStordata/dskperfmon.txt','a') as f:
    f.write(str(time())+' dskperf/'+myhost+'/'+thedsk['name']+'\t '+str(thedsk['tps'])+'/'+str(thedsk['throuput'])+'/'+str(thedsk['read'])+'/'+dsk+'\n')
