@@ -27,7 +27,8 @@ if targetcli ls /iscsi 2>/dev/null | grep -q "iqn.2016-03.com.$lost:t1"; then
 	timeout 60 targetcli /iscsi delete iqn.2016-03.com.$lost:t1 >/dev/null 2>&1
 	log "target removed"
 fi
-for bs in `targetcli ls /backstores/block 2>/dev/null | awk '/o- .*-'$lost' /{print $3}'`; do
+# the names are taken with sed on "o- <name> ...": the tree is printed with or without a leading "|", so a column number is not safe
+for bs in `targetcli ls /backstores/block 2>/dev/null | sed -n 's/.*o- \(loop[0-9]*-'$lost'\) .*/\1/p'`; do
 	timeout 30 targetcli /backstores/block delete $bs >/dev/null 2>&1
 done
 log "backstores left for $lost: `targetcli ls /backstores/block 2>/dev/null | grep -c -- "-$lost "`"
