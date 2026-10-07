@@ -164,7 +164,8 @@ targetcli /iscsi/iqn.2016-03.com.${myhost}:t1 set global auto_add_mapped_luns=tr
 
 tpgs1=`echo "$currentdisks" | grep iqn | grep TPG | grep :t1`
 #tpgs1=(`targetcli ls /iscsi | grep iqn | grep TPG | grep ':t1'`)
-tpgs=`echo "$currentdisks" | grep iqn | grep TPG | grep ':t1' | awk -F'iqn' '{print $2}' | awk '{print $1}'`
+# only MY target: with several clusters in one kernel (containers) the LIO config also holds other nodes' targets
+tpgs=`echo "$currentdisks" | grep iqn | grep TPG | grep "com.${myhost}:t1" | awk -F'iqn' '{print $2}' | awk '{print $1}'`
 # mapping the luns to every iqn in the tpgs create the missing ones and create also the 
 for node in "${nodes[@]}"; do
  for ddisk in "${disks[@]}"; do
