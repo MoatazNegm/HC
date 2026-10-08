@@ -23,7 +23,7 @@ log "start"
 orphans=`/pace/cpoolowner.sh mine $lost`
 # a pool that is already SUSPENDED cannot be asked for its owner; with its disks gone it is the lost host's by definition
 for sp in `ls /proc/spl/kstat/zfs 2>/dev/null | grep '^pdhcp'`; do
-	[ "`cat /proc/spl/kstat/zfs/$sp/state 2>/dev/null`" = "ONLINE" ] || orphans="$orphans $sp"
+	case "`cat /proc/spl/kstat/zfs/$sp/state 2>/dev/null`" in ONLINE|DEGRADED) ;; *) orphans="$orphans $sp" ;; esac
 done
 orphans=`echo $orphans | tr ' ' '\n' | sort -u | tr '\n' ' '`
 log "its pools: ${orphans:-none}"

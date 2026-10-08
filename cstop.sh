@@ -16,7 +16,7 @@ log() { echo "`date '+%H:%M:%S'` cstop $me: $*" >> /root/cstop.log; }
 log "stop requested"
 for p in `/pace/cpoolowner.sh mine $me`; do
 	st=`cat /proc/spl/kstat/zfs/$p/state 2>/dev/null`
-	if [ "$st" != "ONLINE" ]; then
+	if [ "$st" != "ONLINE" ] && [ "$st" != "DEGRADED" ]; then
 		log "pool $p is $st -- not touched"
 		continue
 	fi

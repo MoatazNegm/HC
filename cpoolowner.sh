@@ -10,7 +10,8 @@
 # A zfs command on a SUSPENDED pool does not return, and a blocked one is not killable -- one more per call,
 # every few seconds.  So properties are read and written only for pools whose kernel state is ONLINE
 # (/proc/spl/kstat/zfs/<pool>/state, a plain read that cannot block); any other pool counts as "no owner".
-online() { [ "`cat /proc/spl/kstat/zfs/$1/state 2>/dev/null`" = "ONLINE" ]; }
+# a DEGRADED pool (a disk is gone, the rest answers) is just as readable and must keep its owner; SUSPENDED is the dangerous one
+online() { case "`cat /proc/spl/kstat/zfs/$1/state 2>/dev/null`" in ONLINE|DEGRADED) true ;; *) false ;; esac; }
 cmd=$1
 case $cmd in
 claim)

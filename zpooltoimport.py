@@ -51,7 +51,7 @@ def poolonline(pool):
  # alone here; /pace/closthost.sh (container flavour) gives it its disks back and resumes it first.
  try:
   with open('/proc/spl/kstat/zfs/'+pool+'/state') as f:
-   return f.read().strip() == 'ONLINE'
+   return f.read().strip() in ('ONLINE', 'DEGRADED')   # DEGRADED answers; only SUSPENDED hangs
  except OSError:
   return False
 
