@@ -11,15 +11,18 @@ diskserial() {
 # setproduct <backstore name>: the SCSI product id the initiators see (lsscsi model column) is "<disk>-<host>", and
 # every reader takes the host from it.  LIO's default cuts the name to 15 characters, so "loop1-dhcp328043" lost the
 # last digit of the host name and the disks belonged to a host that does not exist.  The field holds 16, and it can
-# only be written before the backstore is exported -- so right after it is created.  (17 or more, e.g. loop10-<host>,
-# cannot fit: more than nine loop disks per node need a shorter device name.)
+# only be written before the backstore is exported -- so right after it is created.  (loop10 and up: see below.)
 setproduct() {
-	if [ ${#1} -le 16 ]; then
+	pid=$1
+	# loop10 and up: "loop10-<host>" is 17 characters and does not fit; the readers only take what follows the first "-" (the host),
+	# so "l10-<host>" (14 characters) is used as the product id there; the backstore keeps its full name
+	[ ${#pid} -gt 16 ] && pid=`echo "$pid" | sed 's/^loop\([0-9][0-9]*\)-/l\1-/'`
+	if [ ${#pid} -le 16 ]; then
 		for pf in /sys/kernel/config/target/core/*/$1/wwn/product_id; do
-			[ -w "$pf" ] && echo -n "$1" > "$pf" 2>/dev/null
+			[ -w "$pf" ] && echo -n "$pid" > "$pf" 2>/dev/null
 		done
 	else
-		echo "setproduct: $1 is longer than 16 characters, the host name in it will be cut"
+		echo "setproduct: $pid is longer than 16 characters, the host name in it will be cut"
 	fi
 }
 ######################
