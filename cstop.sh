@@ -26,6 +26,8 @@ for p in `/pace/cpoolowner.sh mine $me`; do
 		log "pool $p: its disks do not answer -- not exported"
 		continue
 	fi
+	# the LIO backstores on this pool's zvols (iSCSI volumes) would make the export "busy"
+	[ -x /pace/ciscsirelease.sh ] && /pace/ciscsirelease.sh
 	if timeout 100 zpool export $p >> /root/cstop.log 2>&1; then
 		log "pool $p exported"
 	else
