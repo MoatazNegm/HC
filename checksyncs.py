@@ -56,6 +56,28 @@ def signal_reboot_via_etcd(etcd_endpoint, myhost, reason):
         print(f"[checksyncs] WARNING: failed to write {key}={reason} to {etcd_endpoint}: {exc}")
 
 software = 'na'
+def reqorder(item):
+ """Order of a pending sync request = the time it was filed, in integer nanoseconds.
+ The value of a request is <kind>_<name>_<stamp> (user_usr1_<ns>, group_grp1_<ns>) or <kind>_<stamp> (UsrChange_<ns>,
+ GrpChange_<ns>, passwd_<seconds.fraction>) or <kind>_initial_<seconds>.  It used to be sorted by the second field, which is the
+ NAME for user_/group_ and the stamp for UsrChange_/GrpChange_: digits sort before letters, so the change of a user's groups was
+ always processed before the user was created on the node, found no user ('id' failed) and was dropped (group race, test 22).
+ 'initial' requests (full copies) go first, then the single changes in the order they were made (UnixAddUser files UsrChange
+ 10 ns after user)."""
+ val = str(item[1])
+ if '_initial_' in val:
+  return 0
+ last = val.split('_')[-1]
+ try:
+  if '.' in last:
+   return int(float(last)*1000000000)
+  n = int(last)
+ except ValueError:
+  return 0
+ while 0 < n < 100000000000000000:     # seconds / milliseconds / microseconds -> nanoseconds
+  n *= 1000
+ return n
+
 def insync(leaderip, leader):
     print('checking in sync -------------------')
     isinsync = 1 
@@ -220,7 +242,7 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
     etcdip = myhostip
     myrequests = [ x for x in newallsyncs if x[1] not in mysyncs  and '/request/'+leader in x[0] ] 
  if len(myrequests) > 1:
-     myrequests.sort(key=lambda x: x[1].split('_')[1], reverse=False)
+     myrequests.sort(key=reqorder, reverse=False)
  
  print('myrequests are', myrequests)
  for syncinfo in myrequests:
@@ -397,7 +419,7 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
     print('iiiiiiiiiiiiiiiiiiiiiiiiiihere')
  if len(myrequests) > 1:
     print('multiple requests',myrequests)
-    myrequests.sort(key=lambda x: x[1].split('_')[1], reverse=False)
+    myrequests.sort(key=reqorder, reverse=False)
  print('myrequests are', myrequests)
  for syncinfo in myrequests:
   evacuateflag = 0
