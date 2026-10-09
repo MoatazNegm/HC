@@ -81,13 +81,17 @@ def zpooltoimport(*args):
  for poo in poouids:
     print('poouids start')
     pool=poo[0].split('/')[1]
-    if pool in str(mypools) and poolonline(pool):
+    if pool not in str(mypools):
+        dels(etcdip, 'poouids/'+pool)      # the pool is not ours any more (taken over elsewhere or deleted): nothing to retry here
+        continue
+    if poolonline(pool):
         cmdline = 'zpool reguid '+pool
-        result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+        result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         if result.returncode == 0:
             print('done')
             cmdline="zpool get guid "+pool+" -H "
             guid=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()[2]
+            dels(leaderip,'sync/ActPool', pool)
             put(leaderip,'ActPool/'+pool,guid)
             dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+guid+'/request','actpool_'+str(stamp()))
             dels(etcdip, 'poouids/'+pool) 
@@ -119,16 +123,26 @@ def zpooltoimport(*args):
    print('result',result)
    if pool in result and poolonline(pool):
     dels(leaderip, 'poolnxt', pool )      # imported: the assignment is done
+    # The pool is imported by its id (ActPool/<pool>), and a new id is given right after the import, so the next import
+    # (by the id every node knows) finds only the devices that took part in THIS import: a disk that was away meanwhile
+    # keeps the old id and can no longer be imported as the pool.  ZFS refuses 'zpool reguid' on a pool that is not healthy,
+    # and after a take over the pool is degraded (the dead node's disk is missing) until the missing disk is replaced.
+    # That refusal was ignored: the old id was stored again, nothing retried, and the next take over imported the stale
+    # disk of the dead node and lost what had been written meanwhile.  Now a refused reguid keeps the old id published
+    # and leaves a retry marker (poouids/<pool>) that the loop at the top of this function works off as soon as the pool is healthy.
     cmdline = 'zpool reguid '+pool
-    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     if result.returncode == 0:
        print('done')
-    cmdline="zpool get guid "+pool+" -H "
-    guid=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()[2]
-    dels(leaderip,'sync/ActPool', pool)
-    put(leaderip,'ActPool/'+pool,guid)
-    dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+guid+'/request','actpool_'+str(stamp()))
-    dels(etcdip, 'poouids/'+pool) 
+       cmdline="zpool get guid "+pool+" -H "
+       guid=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()[2]
+       dels(leaderip,'sync/ActPool', pool)
+       put(leaderip,'ActPool/'+pool,guid)
+       dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+guid+'/request','actpool_'+str(stamp()))
+       dels(etcdip, 'poouids/'+pool) 
+    else:
+       print('reguid refused (pool not healthy yet), retried later:', result.stderr.decode('utf-8','replace'))
+       put(etcdip, 'poouids/'+pool, myhost)
 
     # container flavour: the pool is visible in every node (one kernel), its owner is written on the pool
     if os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10'):
