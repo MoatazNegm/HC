@@ -8,7 +8,7 @@ from etcdputnoport import etcdput as putnoport
 from etcdput import etcdput as put 
 from Evacuatelocal import setall
 from etcddel import etcddel as dels
-from usersyncall import usersyncall, usrfninit, oneusersync
+from usersyncall import usersyncall, usrfninit, oneusersync, pulladminhash
 from groupsyncall import groupsyncall, grpfninit, onegroupsync
 from socket import gethostname as hostname
 from etcdsync import synckeys
@@ -239,7 +239,9 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
    opers= syncleft.split('/')[2].split('_')
    print('#########################################################################')
    print('the sync',sync)
-   if sync in wholeetcd+special1 :
+   # 'passwd' is handled below by pulladminhash + UnixChangePass; synckeysnoport (etcdsyncnoport.py) is unfinished (undefined 'noport',
+   # ignores the tunnel port) and was never imported here, so the NameError ended the whole pull for every password change
+   if sync in wholeetcd :
     if sync == 'Partnr':
       print('iam here')
       synckeysnoport(leaderip, pport, leaderip, 'Partner', 'Partner')
@@ -342,6 +344,7 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
             result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
    if sync in special1 :
       try:
+       pulladminhash(opers[1])   # the receiver must hold the sender's new hash before UnixChangePass reads it from etcd
        cmdline='/TopStor/'+opers[0]+' '+opers[1]+' '+opers[2]
        print('replipass',cmdline)
        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
