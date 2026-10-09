@@ -107,7 +107,8 @@ def zpooltoimport(*args):
    if poolid == '_1':
     poolid = pool
    cmdline= '/usr/sbin/zpool import '+poolid
-   dels(leaderip, 'poolnxt', pool ) 
+   # poolnxt/<pool> is the only trigger of this import: it is deleted only after the import worked (below).  It used to be deleted here,
+   # before the import, so one failed first try (the disk session of the survivor was not up yet after a take over) orphaned the pool for ever.
    print(cmdline)
    put(leaderip, 'pools/'+pool,myhost)
    res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
@@ -117,6 +118,7 @@ def zpooltoimport(*args):
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    print('result',result)
    if pool in result and poolonline(pool):
+    dels(leaderip, 'poolnxt', pool )      # imported: the assignment is done
     cmdline = 'zpool reguid '+pool
     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
     if result.returncode == 0:
@@ -151,9 +153,8 @@ def zpooltoimport(*args):
     #cmdline= 'systemctl restart zfs-zed  '
     #result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    else:
-    dels(leaderip, 'pools/',pool)
+    dels(leaderip, 'pools/',pool)         # not imported (yet): poolnxt stays, the next round (9 s) tries again
         
-   dels(leaderip, 'poolnxt',pool)
     
  if myhost != leader:
   return
