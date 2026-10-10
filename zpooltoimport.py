@@ -70,6 +70,28 @@ def poolonline(pool):
   return False
 
 
+def memberimportdir(pool, disks):
+ # a directory of symlinks to the by-id devices (and their partitions) of the disks etcd lists in <pool>; '' when none is present
+ import glob
+ impdir = '/tmp/impdir-'+pool
+ subprocess.run(['rm','-rf',impdir])
+ os.makedirs(impdir, exist_ok=True)
+ found = 0
+ for name, d in disks.items():
+  if d.get('pool') != pool:
+   continue
+  for key in ('actualdisk','zname','name'):
+   dname = str(d.get(key,'')).replace('/dev/disk/by-id/','')
+   if dname and dname != '_1':
+    for dev in glob.glob('/dev/disk/by-id/'+dname+'*'):
+     link = impdir+'/'+os.path.basename(dev)
+     if not os.path.exists(link):
+      os.symlink(dev, link)
+      found += 1
+ if found == 0:
+  return ''
+ return impdir
+
 def zpooltoimport(*args):
  global leader, leaderip, myhost, myhostip, etcdip
  if args[0]=='init':
@@ -129,7 +151,12 @@ def zpooltoimport(*args):
    poolid = get(leaderip,'ActPool/'+pool)[0]
    if poolid == '_1':
     poolid = pool
+   # Import only from the disks that are members of this pool (etcd), so a stale leg that kept the pool's name but was
+   # detached while its node was away (old guid, free disk now) can never be imported as the pool and then be re-attached over.
    cmdline= '/usr/sbin/zpool import '+poolid
+   impdir = memberimportdir(pool, getall(leaderip)['disks'])
+   if impdir:
+    cmdline= '/usr/sbin/zpool import -d '+impdir+' '+poolid
    # poolnxt/<pool> is the only trigger of this import: it is deleted only after the import worked (below).  It used to be deleted here,
    # before the import, so one failed first try (the disk session of the survivor was not up yet after a take over) orphaned the pool for ever.
    print(cmdline)
