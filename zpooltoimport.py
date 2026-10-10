@@ -44,6 +44,20 @@ def selecthost(poolinfo,readies):
         #    selectedhost[1] = selectedhost[1] + [ host ]
     return selectedhost
         
+def foreignpool(pool):
+ # container flavour: one kernel for every cluster, so a pool of ANOTHER cluster is visible here.  Its owner (zfs property
+ # topstor:owner, /pace/cpoolowner.sh) is a host this cluster has never known (no ipaddr/<host> key): never import,
+ # reguid or re-own such a pool, and drop what already points at it (seen in QC test 23, QSD5.280).
+ if not (os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')):
+  return False
+ try:
+  owner = subprocess.run(['/pace/cpoolowner.sh','of',pool],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode().strip()
+ except Exception:
+  return False
+ if owner in ('', '-', myhost):
+  return False
+ return str(get(leaderip,'ipaddr/'+owner)[0]) == '_1'
+
 def poolonline(pool):
  # "zpool reguid / export / import ..." wait for a transaction group.  On a SUSPENDED pool (its disks are gone) that
  # wait never ends, in the kernel (state D, not killable), and it holds ZFS's global lock: after that every zpool /
@@ -105,6 +119,11 @@ def zpooltoimport(*args):
   for poolline in needtoimport:
    pool = poolline[0].replace('poolnxt/','')
    if pool in str(pools):
+    continue
+   if foreignpool(pool):
+    print('pool of another cluster, not imported', pool)
+    dels(leaderip, 'poolnxt', pool)
+    dels(leaderip, 'pools', pool)
     continue
    print('pool to be imported now', pool)
    poolid = get(leaderip,'ActPool/'+pool)[0]
