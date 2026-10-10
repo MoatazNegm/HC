@@ -87,6 +87,16 @@ def usersyncall(tosync='pullavail'):
   thread_add(user,syncip, tosync)
  if 'pullsync' in tosync:
   pulladminhash('admin')
+ elif myhost not in str(leader):
+  # admin has no usersinfo, so no UnixAddUser above carries its hash: a node that was down while the admin
+  # password changed kept the old one in its etcd and handed it to the cluster when it became the leader
+  try:
+   newhash = str(get(leaderip,'usershash/admin')[0]).replace('\n','')
+   if newhash not in ('_1','-1','','None') and len(newhash) > 3 and newhash != str(get(myhostip,'usershash/admin')[0]).replace('\n',''):
+    put(myhostip,'usershash/admin',newhash)
+    subprocess.run(['/TopStor/UnixChangePass','admin','admin'],stdout=subprocess.PIPE)
+  except Exception as e:
+   print('admin hash sync', e)
  leader=get(leaderip,'leader','--prefix')
  if myhost not in str(leader) or 'pullsync' in tosync:
   for user in myusers:

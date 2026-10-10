@@ -555,6 +555,12 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
 
    if sync in special1 :
       try:
+       if myhost != leader:
+        # UnixChangePass reads the hash from THIS node's etcd; nothing copied the leader's new hash here, so a
+        # follower kept (and after a fail over the cluster went back to) the old password
+        newhash = str(get(leaderip,'usershash/'+opers[1])[0]).replace('\n','')
+        if newhash not in ('_1','-1','','None') and len(newhash) > 3:
+         put(myhostip,'usershash/'+opers[1],newhash)
        cmdline='/TopStor/'+opers[0]+' '+opers[1]+' '+opers[2]
        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
       except:
