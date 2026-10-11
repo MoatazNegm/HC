@@ -70,6 +70,17 @@ def poolonline(pool):
   return False
 
 
+def poolishere(pool):
+ # container flavour: one kernel, the owner is written on the pool; physical: the pool is imported here or it is not
+ if os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10'):
+  try:
+   res = subprocess.run(['/pace/cpoolowner.sh','of',pool],stdout=subprocess.PIPE,timeout=30)
+   return res.stdout.decode('utf-8','replace').strip() in (myhost, '')
+  except Exception:
+   return True       # unknown: keep the marker
+ return os.path.exists('/proc/spl/kstat/zfs/'+pool)
+
+
 def memberimportdir(pool, disks):
  # a directory of symlinks to the by-id devices (and their partitions) of the disks etcd lists in <pool>; '' when none is present
  import glob
@@ -117,12 +128,17 @@ def zpooltoimport(*args):
  for poo in poouids:
     print('poouids start')
     pool=poo[0].split('/')[1]
-    if pool not in str(mypools):
+    # Ours is decided by the pool itself (owner property / imported here), not by the pools list of etcd: right after a
+    # take over that list still names the old host for a few seconds, the marker was dropped in that window and the pool kept
+    # its old id for ever (seen in QC test 14, QSD5.304: the returning node imported its stale leg and the data was lost).
+    if not poolishere(pool):
         dels(etcdip, 'poouids/'+pool)      # the pool is not ours any more (taken over elsewhere or deleted): nothing to retry here
         continue
     if poolonline(pool):
         cmdline = 'zpool reguid '+pool
         result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        with open('/root/poouids.log','a') as f:
+            f.write(str(stamp())+' '+pool+' reguid rc='+str(result.returncode)+' '+result.stderr.decode('utf-8','replace')+'\n')
         if result.returncode == 0:
             print('done')
             cmdline="zpool get guid "+pool+" -H "
