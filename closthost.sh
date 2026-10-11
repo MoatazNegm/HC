@@ -71,6 +71,11 @@ for p in $orphans; do
 		log "pool $p exported -- it can be imported by the node the leader names"
 	else
 		log "pool $p: export refused (see above) -- left imported"
+		# a refused export has already unmounted the datasets (libzfs unmounts first): the pool stays imported but
+		# nothing is mounted, putzpool's test write into /<pool> fails and marks the leg UNAVAILABLE, so no spare is
+		# ever chosen (QC test 14 round 11).  Mount them again, as an import does.
+		for ds in `zfs list -H -o name -r $p 2>/dev/null`; do timeout 30 zfs mount $ds >/dev/null 2>&1; done
+		log "pool $p: datasets mounted again: `zfs list -H -o mounted -r $p 2>/dev/null | tr '\n' ' '`"
 	fi
 done
 log "done"
