@@ -63,7 +63,10 @@ def thread_del(username,syncip, pullsync='pullavail'):
  if username not in str(allusers) and 'admin' != username:
   cmdline=['/TopStor/UnixDelUser',leaderip, username,'system',pullsync]
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
-  dels(syncip,'user',username)
+  # exact keys only: dels(syncip,'user',username) removed every key whose text merely contained the name
+  # (deleting usr1 also deleted usr10..usr16)
+  dels(syncip,'usersinfo/'+username)
+  dels(syncip,'usershash/'+username)
 
 def usersyncall(tosync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip,pport
