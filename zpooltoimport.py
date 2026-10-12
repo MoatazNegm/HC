@@ -245,6 +245,11 @@ def zpooltoimport(*args):
  for notpo in notactivepools:
     notpname = notpo['name']
     notpid = notpo['guid'] 
+    # container flavour: one kernel for every cluster, so an EXPORTED pool of another cluster (its owner node is down or
+    # stopped, the pool is listed by "zpool import" and has no readable owner property) looks like a pool nobody knows.
+    # This cluster has never had it (no ActPool/<pool>, not in pools/): never assign it (QC test 21, QSD5.315).
+    if (os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')) and notpname not in str(activepools):
+        continue
     if (notpname in str(activepools) and (notpid in str(activepools) or len(readies) == 1)) or notpname not in str(activepools): 
         cpools = cpools + [notpo] 
     #if len(readies) == 1:
