@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import subprocess, sys
+import subprocess, sys, os, socket
 from etcdget import etcdget as get
 from etcdput import etcdput as put 
 from etcddel import etcddel as dels 
@@ -7,6 +7,15 @@ from etcddel import etcddel as dels
 
 def ispoolhere(pool):
     # the pool is imported on THIS node (never hangs: zpool list under timeout)
+    # container flavour: all nodes share one kernel, so every node lists every pool; the owner is the zfs property
+    # topstor:owner (cpoolowner.sh).  An unknown owner ('-' or empty) falls back to the zpool list test.
+    if os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10'):
+        try:
+            owner = subprocess.run(['timeout','30','/pace/cpoolowner.sh','of',pool],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode().strip()
+        except Exception:
+            owner = ''
+        if owner not in ('', '-'):
+            return owner == socket.gethostname()
     try:
         out = subprocess.run(['timeout','10','zpool','list','-H','-o','name'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode()
     except Exception:
