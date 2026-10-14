@@ -76,6 +76,14 @@ for p in $orphans; do
 		log "pool $p: state `cat /proc/spl/kstat/zfs/$p/state 2>/dev/null`, a test write failed -- NOT exported"
 		continue
 	fi
+	# QSD5.323: the owner is read again right before the export.  The clear/ONLINE wait above can last seconds, and the leader's
+	# take-over import (owner set right after it) may have run inside that window: test 16 round 260 exported the pool
+	# the take-over had just imported, and the node had no pool for minutes.
+	own=`/pace/cpoolowner.sh of $p`
+	if [ -n "$own" ] && [ "$own" != "-" ] && [ "$own" != "$lost" ]; then
+		log "pool $p: taken over by $own meanwhile -- NOT exported"
+		continue
+	fi
 	if zpool export $p >> /root/closthost.log 2>&1; then
 		log "pool $p exported -- it can be imported by the node the leader names"
 	else
