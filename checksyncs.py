@@ -8,7 +8,7 @@ from etcdputnoport import etcdput as putnoport
 from etcdput import etcdput as put 
 from Evacuatelocal import setall
 from etcddel import etcddel as dels
-from usersyncall import usersyncall, usrfninit, oneusersync, pulladminhash
+from usersyncall import usersyncall, usrfninit, oneusersync, pulladminhash, followadminhash
 from groupsyncall import groupsyncall, grpfninit, onegroupsync
 from socket import gethostname as hostname
 from etcdsync import synckeys
@@ -401,6 +401,8 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         clusterhost = leaderip
  else:
     etcdip = myhostip
+    if 'pullsync' not in pullsync:
+        followadminhash(leaderip, myhostip)
  allsyncs = get(leaderip,'sync','request') 
  if 'pullsync' in pullsync:
     print('allsyncs',pullsync,allsyncs)
