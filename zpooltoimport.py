@@ -164,6 +164,11 @@ def zpooltoimport(*args):
     dels(leaderip, 'pools', pool)
     continue
    print('pool to be imported now', pool)
+   # the assignment may have been withdrawn since the list was read (DGdestroyPool exports the pool for a moment): a pool that
+   # is being destroyed must not be taken over here (QSD5.325)
+   if str(get(leaderip,'poolnxt/'+pool)[0]) != myhost:
+    print('assignment of', pool, 'withdrawn, not imported')
+    continue
    poolid = get(leaderip,'ActPool/'+pool)[0]
    if poolid == '_1':
     poolid = pool
