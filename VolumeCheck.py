@@ -6,6 +6,46 @@ from etcddel import etcddel as dels
 #from broadcasttolocal import broadcasttolocal 
 from time import time as stamp
 from glob import glob
+import json
+from concurrent.futures import ThreadPoolExecutor
+
+# QSD5.330: after a take-over every dirty volume is started in parallel.  Volumes that share an address are
+# processed one after the other (cifs.py also takes a per-address lock); the volume types run side by side.
+def runbygroup(items, keyf, worker):
+    groups = {}
+    for it in items:
+        groups.setdefault(keyf(it), []).append(it)
+    def rungroup(g):
+        for it in g:
+            try:
+                worker(it)
+            except Exception as e:
+                print('volume worker failed', it, e)
+    if not groups:
+        return
+    with ThreadPoolExecutor(max_workers=len(groups)) as ex:
+        list(ex.map(rungroup, groups.values()))
+
+_inspectcache = {}
+def inspectall(dockers):
+    # one docker inspect for all running containers (was one call per volume)
+    global _inspectcache
+    names = [l.split(' ')[-1] for l in dockers.split('\n')[1:] if l.strip()]
+    _inspectcache = {}
+    if not names:
+        return
+    out = subprocess.run(['docker','inspect']+names,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode('utf-8')
+    try:
+        for d in json.loads(out):
+            _inspectcache[d['Name'].lstrip('/')] = json.dumps(d)
+    except Exception:
+        _inspectcache = {}
+
+def inspectone(dckrname):
+    if dckrname in _inspectcache:
+        return _inspectcache[dckrname]
+    cmdline = 'docker inspect '+dckrname
+    return subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
 
 
 #leader=get('leader','--prefix')[0][0].split('/')[1]
@@ -53,8 +93,7 @@ def getdirtyvols(vtype, etcds, replis, dockers):
                 continue
             if reslist[ippos] in dckr and reslist[-1] =='active':
                 dckrname=dckr.split(' ')[-1]
-                cmdline = 'docker inspect '+dckrname
-                result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+                result = inspectone(dckrname)
                 print(dckrname, reslist[1],reslist)
                 if reslist[1] not in str(result):
                     print('gggggggggggggggggggggggggggggggggggggggggg')
@@ -110,7 +149,7 @@ def nfsnew( etcds, replis, dockers):
  print('cccccccccccccccccccccccccccccc')
  print('dirty',dirtyset)
  print('cccccccccccccccccccccccccccccc')
- for res in dirtyset:
+ def one(res):
    reslist=res.split('/')
    print('update',reslist[1])
    cmdline = '/TopStor/undockerthis.sh '+reslist[getippos('nfs')]
@@ -123,6 +162,7 @@ def nfsnew( etcds, replis, dockers):
    print(cmdline)
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    put(etcdip,'dirty/volume','0')
+ runbygroup(sorted(dirtyset), lambda r: r.split('/')[getippos('nfs')], one)
 
 def cifs( etcds, replis, dockers):
  global leader, leaderip, myhost, myhostip, etcdip
@@ -130,7 +170,7 @@ def cifs( etcds, replis, dockers):
  print('cccccccccccccccccccccccccccccc')
  print('dirty',dirtyset)
  print('cccccccccccccccccccccccccccccc')
- for res in dirtyset:
+ def one(res):
    reslist=res.split('/')
    print('update',reslist[1])
    cmdline = '/TopStor/undockerthis.sh '+reslist[7]
@@ -151,6 +191,7 @@ def cifs( etcds, replis, dockers):
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    print('cifs result',result)
    put(etcdip,'dirty/volume','0')
+ runbygroup(sorted(dirtyset), lambda r: r.split('/')[7], one)
 
 def homes(etcds, replis, dockers):
  global leader, leaderip, myhost, myhostip, etcdip
@@ -159,7 +200,7 @@ def homes(etcds, replis, dockers):
  print('hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh')
  print('dirty',dirtyset)
  print('hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh')
- for res in dirtyset:
+ def one(res):
    reslist=res.split('/')
    print('update',reslist[1])
    cmdline = '/TopStor/undockerthis.sh '+reslist[7]
@@ -172,6 +213,7 @@ def homes(etcds, replis, dockers):
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    print('result',result)
    put(etcdip,'dirty/volume','0')
+ runbygroup(sorted(dirtyset), lambda r: r.split('/')[7], one)
 
 
 def iscsi(etcds, replis):
@@ -228,12 +270,16 @@ def volumecheck(etcds, replis, *args):
  #exports = [ x.split('exports.')[1] for x in exports ]
  print('----------------------------------------------------')
  print(etcds,'\n',dockers)
- nfsnew(etcds, replis, dockers)
- print('----------------------------------------------------')
- cifs(etcds, replis, dockers)
- #nfs(etcds, replis, exports)
- homes(etcds, replis, dockers)
- iscsi(etcds, replis)
+ inspectall(dockers)
+ jobs = [lambda: nfsnew(etcds, replis, dockers), lambda: cifs(etcds, replis, dockers),
+         lambda: homes(etcds, replis, dockers), lambda: iscsi(etcds, replis)]
+ def runjob(j):
+     try:
+         j()
+     except Exception as e:
+         print('volumecheck job failed', e)
+ with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+     list(ex.map(runjob, jobs))
  cleanfailed(dockers) 
    
 if __name__=='__main__':
