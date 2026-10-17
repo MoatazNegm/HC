@@ -58,6 +58,24 @@ def foreignpool(pool):
   return False
  return str(get(leaderip,'ipaddr/'+owner)[0]) == '_1'
 
+def ownedbylivepeer(pool):
+ # container flavour: one kernel, so a pool that a node has just created is already "imported" here. The leader names a
+ # standby (poolnxt) at once, and in the first seconds the pools list does not hold the pool yet: the standby "imported" it
+ # (a no-op), took the owner property and left the creator holding the mount -- the pool then showed host UNAVAIL / not
+ # balanced and its delete ended 'pool is busy' (QC test 10, QSD5.332).  A pool that is imported and whose owner is another
+ # node that is still ready is not taken over; a dead owner is not in ready, so a real take over is not affected.
+ if not (os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')):
+  return False
+ if not os.path.exists('/proc/spl/kstat/zfs/'+pool):
+  return False
+ try:
+  owner = subprocess.run(['/pace/cpoolowner.sh','of',pool],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=30).stdout.decode().strip()
+  if owner in ('', '-', myhost):
+   return False
+  return owner in str(get(leaderip,'ready','--prefix'))
+ except Exception:
+  return False
+
 def poolonline(pool):
  # "zpool reguid / export / import ..." wait for a transaction group.  On a SUSPENDED pool (its disks are gone) that
  # wait never ends, in the kernel (state D, not killable), and it holds ZFS's global lock: after that every zpool /
@@ -162,6 +180,9 @@ def zpooltoimport(*args):
     print('pool of another cluster, not imported', pool)
     dels(leaderip, 'poolnxt', pool)
     dels(leaderip, 'pools', pool)
+    continue
+   if ownedbylivepeer(pool):
+    print('pool is imported and owned by a live node, not taken over', pool)
     continue
    print('pool to be imported now', pool)
    # the assignment may have been withdrawn since the list was read (DGdestroyPool exports the pool for a moment): a pool that
