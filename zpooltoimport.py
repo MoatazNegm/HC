@@ -181,6 +181,9 @@ def zpooltoimport(*args):
     dels(leaderip, 'poolnxt', pool)
     dels(leaderip, 'pools', pool)
     continue
+   if str(get(leaderip,'destroying/'+pool)[0]) != '_1':
+    print('pool is being destroyed, not imported', pool)
+    continue
    if ownedbylivepeer(pool):
     print('pool is imported and owned by a live node, not taken over', pool)
     continue
