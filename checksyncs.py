@@ -363,7 +363,12 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
         else:    #'UnixChange' in opers[0]:
             cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:]) 
             print('cmdline',cmdline)
-            result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+            try:
+             result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+            except (FileNotFoundError, PermissionError) as e:
+             # an unknown request (no such script) must not crash the loop: it blocked every later request, so a group or
+             # user deleted on the leader stayed on the follower
+             print('sync request skipped, no such script:', cmdline, e)
    if sync in special1 :
       try:
        pulladminhash(opers[1])   # the receiver must hold the sender's new hash before UnixChangePass reads it from etcd
@@ -551,7 +556,12 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         else:    
             cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:]) 
             print('cmdline',cmdline)
-            result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+            try:
+             result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+            except (FileNotFoundError, PermissionError) as e:
+             # an unknown request (no such script) must not crash the loop: it blocked every later request, so a group or
+             # user deleted on the leader stayed on the follower
+             print('sync request skipped, no such script:', cmdline, e)
 
    #if sync in special1 and myhost != leader :
 
