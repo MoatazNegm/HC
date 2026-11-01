@@ -76,6 +76,18 @@ def ownedbylivepeer(pool):
  except Exception:
   return False
 
+def destroyedpool(pool):
+ # QSD5.345: DGdestroyPool leaves a tombstone destroyedpool/<pool> (leader etcd, copied to every node): a pool of that name
+ # that shows up again in 'zpool import' is a stale leg of the deleted pool (its node was away at the delete) and is never
+ # assigned, imported or re-registered here.  A pool the user imports on purpose (DGsetPool 'import') clears the tombstone.
+ for ip in (leaderip, etcdip):
+  try:
+   if str(get(ip,'destroyedpool/'+pool)[0]) not in ('_1', '-1', '', 'None'):
+    return True
+  except Exception:
+   pass
+ return False
+
 def poolonline(pool):
  # "zpool reguid / export / import ..." wait for a transaction group.  On a SUSPENDED pool (its disks are gone) that
  # wait never ends, in the kernel (state D, not killable), and it holds ZFS's global lock: after that every zpool /
@@ -149,9 +161,11 @@ def zpooltoimport(*args):
     # Ours is decided by the pool itself (owner property / imported here), not by the pools list of etcd: right after a
     # take over that list still names the old host for a few seconds, the marker was dropped in that window and the pool kept
     # its old id for ever (seen in QC test 14, QSD5.304: the returning node imported its stale leg and the data was lost).
-    if not poolishere(pool):
+    if not poolishere(pool) or destroyedpool(pool):
         dels(etcdip, 'poouids/'+pool)      # the pool is not ours any more (taken over elsewhere or deleted): nothing to retry here
         continue
+    if str(get(leaderip,'destroying/'+pool)[0]) != '_1':
+        continue                           # QSD5.345: being destroyed: no reguid, no new ActPool/<pool> meanwhile
     if poolonline(pool):
         cmdline = 'zpool reguid '+pool
         result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -183,6 +197,10 @@ def zpooltoimport(*args):
     continue
    if str(get(leaderip,'destroying/'+pool)[0]) != '_1':
     print('pool is being destroyed, not imported', pool)
+    continue
+   if destroyedpool(pool):
+    print('pool was deleted, a stale copy is not imported', pool)
+    dels(leaderip, 'poolnxt/'+pool)
     continue
    if ownedbylivepeer(pool):
     print('pool is imported and owned by a live node, not taken over', pool)
@@ -279,6 +297,8 @@ def zpooltoimport(*args):
     # This cluster has never had it (no ActPool/<pool>, not in pools/): never assign it (QC test 21, QSD5.315).
     if (os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')) and notpname not in str(activepools):
         continue
+    if destroyedpool(notpname):
+        continue      # QSD5.345: a stale copy of a deleted pool (both flavours)
     if (notpname in str(activepools) and (notpid in str(activepools) or len(readies) == 1)) or notpname not in str(activepools): 
         cpools = cpools + [notpo] 
     #if len(readies) == 1:

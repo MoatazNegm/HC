@@ -21,7 +21,9 @@ syncanitem = [ 'getconfig','priv','dirty','hostdown', 'replipart','evacuatehost'
 special1 = [ 'passwd' ]
 forReceivers = [ 'user', 'group', 'GrpChange', 'UsrChange' ] + special1
 wholeetcd = [ 'etherports','offlinethis','localrun','known','nmspce','gateway','deens','enteepe', 'teezee','ceecee', 'pool','pools', 'needtoreplace','Partnr', 'apikeys', 'Snappreiod','leader', 'running','volumes','ports', 'offlines','diskref', 'ports', 'cachespares']
-etcdonly = [ 'cleanlost','balancedtype','sizevol', 'ActPool', 'alias', 'hostipsubnet', 'allowedPartners','activepool', 'poolnxt','pools', 'logged','ActivePartners','configured','ready', 'pool']
+# QSD5.345: 'destroyedpool' = tombstones of deleted pools (DGdestroyPool), so the import loop of every node, also a later
+# leader, never takes a stale copy of a deleted pool again (zpooltoimport.py)
+etcdonly = [ 'cleanlost','balancedtype','sizevol', 'ActPool', 'alias', 'hostipsubnet', 'allowedPartners','activepool', 'poolnxt','pools', 'logged','ActivePartners','configured','ready', 'pool', 'destroyedpool']
 restartetcd = wholeetcd + etcdonly
 replisyncs = ['user','group', 'UsrChange', 'GrpChange']
 syncs = etcdonly + syncanitem + special1 + wholeetcd
