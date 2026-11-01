@@ -464,6 +464,20 @@ def solvedegradedraid(raid,diskname):
     
  cmdline2=['/sbin/zpool', 'replace','-f',raid['pool'], diskuid,'/dev/'+dmstup]
  forget=subprocess.run(cmdline2,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+ if forget.returncode != 0:
+    # QSD5.345: the lost leg is detached only after the stand-in placeholder took its place. A failed replace (device
+    # busy, placeholder too small, pool gone) used to be followed by the offline of the placeholder and the detach of
+    # the lost leg anyway: the mirror lost its redundancy and became a plain stripe (test 681). Now: log and leave the
+    # mirror degraded; the next pass (or the return of the node) heals it.
+    print('replace of the lost disk failed, mirror left degraded (no offline/detach)', raid['pool'], diskuid,
+          '/dev/'+dmstup, 'rc', forget.returncode, forget.stderr.decode())
+    with open('/root/dmproblem','w') as f:
+       f.write('cmdline '+ " ".join(cmdline2)+'\n')
+       f.write('returncode: '+str(forget.returncode)+'\n')
+       f.write('result: '+forget.stdout.decode()+'\n')
+       f.write('result: '+forget.stderr.decode()+'\n')
+       f.write('skipped: offline /dev/'+dmstup+' and detach '+str(diskuid)+'\n')
+    return
  sleep(2)
  cmdline2=['/sbin/zpool', 'offline',raid['pool'],'/dev/'+dmstup]
  forget2=subprocess.run(cmdline2,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
