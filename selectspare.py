@@ -34,10 +34,12 @@ def solvefaultyreplace(raid):
     replacedict = dict()
     print('solving faulty replace')
     for disk in raid['disklist']:
-        if 'replac' in disk['replacingroup'] and 'replac' not in disk['name']:
-            if disk['replacingroup'] not in replacedict:
-                replacedict[disk['replacingroup']] = list()
-            replacedict[disk['replacingroup']].append(disk)
+        # QSD5.345: only pool disks carry 'replacingroup' (putzpool.py); a disk of the free / spare-cache list has none
+        replacingroup = disk.get('replacingroup', '')
+        if 'replac' in replacingroup and 'replac' not in disk['name']:
+            if replacingroup not in replacedict:
+                replacedict[replacingroup] = list()
+            replacedict[replacingroup].append(disk)
     flag = 0 
     off_disk = 0
     for replacegroup in replacedict:
@@ -477,13 +479,11 @@ def solvedegradedraid(raid,diskname):
     f.write('dmstuplst[0]: '+str(dmstuplst)+'\n')
  print('forgetting the dead disk result by internal dm stup',forget.stderr.decode())
  print('returncode',forget.returncode,dmstuplst)
- if forget.returncode == 0:
-    put(etcdip, dmstuplst[0][0],'inuse/'+dmstup)
- else:
-    if forget.returncode != 255:
-     dels(etcdip, dmstuplst[0][0], '--prefix')
-     #delstolocal(dmstuplst[0][0], '--prefix')
-     return  
+ # QSD5.345: the bookkeeping that followed here used dmstuplst[0][0] as an etcd key, i.e. the FIRST LETTER of the first
+ # device-mapper name ('d'): a failed replace deleted every key of the leader etcd that starts with 'd' (dirty/..., dns...)
+ # and a good one wrote a key 'd' that nothing reads.  Removed; the placeholder is found again by lstdm.sh (unused
+ # placeholders only).
+ return
 
 def solvetheasks(needtoreplace):
     global leader, leaderip, myhost, myhostip, etcdip
@@ -627,7 +627,11 @@ def spare2(*args):
        alldisks[disk['name']] = disk.copy() 
  for raidname in allinfo['raids']:
     raid = allinfo['raids'][raidname]
-    if 'free' not in raid['name'] and raid['silvering'] == 'no':
+    # QSD5.345: the free list AND the spare-cache list (raid 'cache' of the pseudo pool 'pree', putzpool.py) are not raids of
+    # a pool: nothing to optimize there.  The cache list was not skipped, solvefaultyreplace() raised KeyError
+    # 'replacingroup' on its disk and the exception ended every selectspare pass of the leader, so with one disk on the
+    # spare-cache list no pool was healed any more (QC test 712: DEGRADED mirror, hot-added disk never used).
+    if 'free' not in raid['name'] and raid.get('pool') != 'pree' and raid['silvering'] == 'no':
         diskset = set(raid['disks'])
         faultyreplaceflag = 0
         faultyreplaceflag = solvefaultyreplace(raid)
