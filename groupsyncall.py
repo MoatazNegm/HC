@@ -44,13 +44,23 @@ def thread_add(user,syncip,pullsync='pullavail'):
  put(syncip, user[0],user[1])
  result=subprocess.run(cmdline,stdout=subprocess.PIPE)
 
+def groupnames(entries):
+ # QSD5.345: the exact group names of a 'usersigroup --prefix' read ((key, value) pairs; '_1' / strings are no groups)
+ names = set()
+ for entry in entries if isinstance(entries, (list, tuple)) else []:
+  if isinstance(entry, (list, tuple)) and len(entry) > 1 and str(entry[0]).startswith('usersigroup/'):
+   names.add(str(entry[0]).split('/',1)[1])
+ return names
+
 #def thread_del(*user):
 def thread_del(username,pullsync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip
  if 'Everyone' == username:
   return
  print(username)
- if username not in str(allusers):
+ # QSD5.345: exact name, not 'username not in str(allusers)': that text test found a short group name (ab, no, one) in any
+ # other key or value (a member list, 'nogrouphome', 'Everyone') and kept a group the leader had deleted
+ if username not in groupnames(allusers):
   print(username,str(allusers))
   cmdline=['/TopStor/UnixDelGroup',leaderip, username,'system',pullsync]
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
@@ -73,8 +83,14 @@ def groupsyncall(tosync=''):
   allusers=[]
  if '_1' in myusers:
   myusers=[]
+ # QSD5.345: a local group is stale when its NAME is gone on the leader (OS group and local key deleted together); a group
+ # that is still there with other members is rewritten by the add loop below (comparing whole (key, value) pairs deleted
+ # the local key of every changed group and then kept its OS group through the text test)
+ leadernames = groupnames(allusers)
  for user in myusers:
-  if user not in allusers:
+  if not isinstance(user, (list, tuple)) or len(user) < 2:
+   continue
+  if str(user[0]).split('/',1)[-1] not in leadernames:
    groupkey = user[0]
    thread_del(groupkey.split('/')[1])
    dels(syncip, groupkey)      # QSD5.345: was dels(syncip, <first letter of the name>), the stale key stayed
