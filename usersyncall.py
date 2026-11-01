@@ -14,9 +14,21 @@ def usrfninit(ldr,ldrip,hst,hstip,pprt='-1'):
  return
 allusers = []
 
+def localgroup(name):
+ # the group exists on this node (getent group)
+ try:
+  return subprocess.run(['getent','group',name],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).returncode == 0
+ except Exception:
+  return False
+
 def thread_add(user,syncip, tosync='pullavail'):
  global myusers
  global allusers, leader ,leaderip, myhost, myhostip,pport
+ # QSD5.345: a user that is gone on the leader reads back as the '_1' placeholder string, not a (key, value) pair; the
+ # index errors below then aborted the whole sync pass (same as the group add, groupsyncall.thread_add)
+ if not isinstance(user, (list, tuple)) or len(user) < 2 or len(str(user[1]).split('/')) < 6:
+  print('user add skipped, user not on the leader any more:', user)
+  return
  username=user[0].replace('usersinfo/','')
  if 'NoUser' == username:
   return
@@ -25,31 +37,42 @@ def thread_add(user,syncip, tosync='pullavail'):
  
  if 'pullsync' in tosync:
     userhash=getnoport(leaderip,pport,'usershash/'+username)[0]
-    everyone=getnoport(leaderip,pport,'usersigroup/Everyone',username)
-    if '_1' not in str(everyone):
-        everyone=',Everyone'
-    else:
-        everyone=''
+    allgroups=getnoport(leaderip,pport,'usersigroup','--prefix')
  else:
     userhash=get(leaderip,'usershash/'+username)[0]
-    everyone=get(leaderip, 'usersigroup/Everyone',username)
-    if '_1' not in str(everyone):
-        everyone=',Everyone'
-    else:
-        everyone=''
+    allgroups=get(leaderip,'usersigroup','--prefix')
+ # QSD5.345: the groups of the user are the groups whose member list (third field of usersigroup/<group>) names this user
+ # exactly.  The copy used to pass usersplit[2] of usersinfo/<user> -- which is the user NAME, not a group list -- so the
+ # follower's UnixAddUser (userdel -f + useradd) and the UnixChangeUser after it left the user in no group but Everyone and
+ # took the user out of every group in the follower's own etcd: usersigroup/<group> NoUser and an empty /etc/group line on
+ # the follower while the leader listed the member (QC tests 638, 678; usr1/grp1 in test 14).  Only groups that exist on
+ # this node are given (usermod -G fails as a whole on one unknown group); a group that arrives later adds its members
+ # itself (UnixAddGroup -> UnixChangeGroup).
+ mygroups = []
+ for grp in allgroups:
+  if not isinstance(grp, (list, tuple)) or len(grp) < 2:
+   continue
+  gname = str(grp[0]).replace('usersigroup/','')
+  fields = str(grp[1]).split('/')
+  if len(fields) < 3 or gname in mygroups:
+   continue
+  if username in fields[2].split(',') and localgroup(gname):
+   mygroups.append(gname)
+ if 'Everyone' not in mygroups and localgroup('Everyone'):
+  mygroups.append('Everyone')
+ groupsarg = 'groups'+(','.join(mygroups) if mygroups else 'NoGroup')
  userinfo=user[1].split(':')
  userid=userinfo[0]
  usergd=userinfo[1]
  usersplit = user[1].split('/')
  homePool = usersplit[1]
- usergroups = usersplit[2] 
  userpass = userhash
  size = usersplit[3]
  HomeAddr = usersplit[-3]
  HomeSubnet = usersplit[-2]
  active = usersplit[-1]
  permissions = ",".join(usersplit[4:-3])
- cmdline=['/TopStor/UnixAddUser',leaderip,username, homePool, 'groups'+usergroups+everyone,userhash, size, HomeAddr, HomeSubnet, tosync, userid,usergd,active, permissions,'system']
+ cmdline=['/TopStor/UnixAddUser',leaderip,username, homePool, groupsarg,userhash, size, HomeAddr, HomeSubnet, tosync, userid,usergd,active, permissions,'system']
  print('***************************')
  print(cmdline)
  print('***************************')
@@ -145,11 +168,17 @@ def oneusersync(oper,usertosync,tosync='pullavail'):
     syncip = myhostip
  
  if oper == 'Add':
+    # QSD5.345: the exact key of this user (the search by text returned the first user whose key or value merely
+    # CONTAINS the name: usr1 -> usr10 when usr1 is gone)
     if 'pullsync' in tosync:
-        user=getnoport(leaderip,pport,'usersinfo', usertosync)[0]
+        found=getnoport(leaderip,pport,'usersinfo/'+usertosync)
     else:
-        user=get(leaderip,'usersinfo', usertosync)[0]
-    thread_add(user,syncip,tosync)
+        found=get(leaderip,'usersinfo/'+usertosync)
+    value=str(found[0]) if len(found) > 0 else '_1'
+    if value in ('_1', '-1', '', 'None'):
+        print('user add skipped, user not on the leader any more:', usertosync)
+        return
+    thread_add(('usersinfo/'+usertosync, value),syncip,tosync)
  else:
     user = usertosync
     thread_del(user,syncip,tosync)

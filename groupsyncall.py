@@ -19,6 +19,13 @@ def grpfninit(ldr,ldrip,hst,hstip,pprt='-1'):
 
 def thread_add(user,syncip,pullsync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip
+ # QSD5.345: a group that is gone on the leader (an add request older than its delete request) reads back as the '_1'
+ # placeholder string, not a (key, value) pair: user[1].split('/')[2] raised IndexError and the exception aborted the whole
+ # sync pass on every round, so the follower acknowledged nothing any more and the cluster stayed out of sync (test 708/709).
+ # Nothing to add then: the later delete request of the same group is applied as usual.
+ if not isinstance(user, (list, tuple)) or len(user) < 2 or len(str(user[1]).split('/')) < 3:
+  print('group add skipped, group not on the leader any more:', user)
+  return
  username=user[0].replace('usersigroup/','')
  if 'Everyone' == username:
   return
@@ -68,9 +75,9 @@ def groupsyncall(tosync=''):
   myusers=[]
  for user in myusers:
   if user not in allusers:
-   user = user[0].split('/')[1] 
-   thread_del(user)
-   dels(syncip, user[0])
+   groupkey = user[0]
+   thread_del(groupkey.split('/')[1])
+   dels(syncip, groupkey)      # QSD5.345: was dels(syncip, <first letter of the name>), the stale key stayed
 
  for user in allusers:
   print(user)
@@ -84,11 +91,17 @@ def onegroupsync(oper,usertosync,tosync='pullavail'):
  else:
     syncip = myhostip
  if oper == 'Add':
+    # QSD5.345: the exact key of this group (the search by text also returned other groups whose value merely contains
+    # the name, and [0] could be one of them)
     if 'pullsync' in tosync:
-        user=getnoport(leaderip, pport, 'usersigroup', usertosync)[0]
+        found=getnoport(leaderip, pport, 'usersigroup/'+usertosync)
     else:
-        user=get(leaderip,'usersigroup', usertosync)[0]
-    thread_add(user,syncip)
+        found=get(leaderip,'usersigroup/'+usertosync)
+    value=str(found[0]) if len(found) > 0 else '_1'
+    if value in ('_1', '-1', '', 'None'):
+        print('group add skipped, group not on the leader any more:', usertosync)
+        return
+    thread_add(('usersigroup/'+usertosync, value),syncip)
  else:
     user = usertosync
     thread_del(user,tosync)
