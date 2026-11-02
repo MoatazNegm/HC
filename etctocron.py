@@ -1,8 +1,44 @@
 #!/usr/bin/python3
-import subprocess,sys, datetime
+import subprocess,sys, datetime, time
 from etcdgetpy import etcdget as get
 
+# QSD5.349: the read of the table, the read of the Snapperiod records and the install run under the lock that
+# TopStor/DGdestroyPool takes for its filter (flock on /TopStordata/cronfile.lock).  Without it an etctocron that read the
+# table (or the records) before a pool delete and installed after the delete's filter wrote the deleted pool's lines back
+# (a 'pump.sh RemoteSnapshotnowOnce' line of the pool: etctocron keeps every line without 'nowhost'), and two etctocron
+# runs at once shared /TopStordata/crons.  Not taken in 60 s (or the lock file cannot be opened): it runs without it.
+LOCKFILE = '/TopStordata/cronfile.lock'
+LOCKWAIT = 60
+
+def cronlock(path=LOCKFILE, wait=LOCKWAIT):
+ try:
+  import fcntl
+  f = open(path, 'a')
+ except Exception:
+  return None
+ end = time.time() + wait
+ while True:
+  try:
+   fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+   return f
+  except (BlockingIOError, PermissionError):
+   if time.time() >= end:
+    f.close()
+    return None
+   time.sleep(0.2)
+  except Exception:
+   f.close()
+   return None
+
 def etctocron(leaderip, period='--prefix'):
+ lock = cronlock()
+ try:
+  _etctocron(leaderip, period)
+ finally:
+  if lock is not None:
+   lock.close()
+
+def _etctocron(leaderip, period='--prefix'):
  cmdline='/bin/crontab -l'
  crons=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout
  crons=str(crons).replace("b'","").split('\\n')
