@@ -83,7 +83,11 @@ def thread_del(username,syncip, pullsync='pullavail'):
  global allusers
  if  'NoUser' == username:
   return
- if username not in str(allusers) and 'admin' != username:
+ # QSD5.350: the exact key usersinfo/<name> ('username not in str(allusers)' was a substring test over keys AND values:
+ # a user 'q1' that was deleted while this node was down stayed here as long as the leader had q1-admin, q10, ... or a
+ # value with 'q1' in it)
+ leadernames = set(str(x[0]) for x in allusers if isinstance(x, (list, tuple)) and len(x) == 2)
+ if 'usersinfo/'+username not in leadernames and 'admin' != username:
   cmdline=['/TopStor/UnixDelUser',leaderip, username,'system',pullsync]
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
   # exact keys only: dels(syncip,'user',username) removed every key whose text merely contained the name
