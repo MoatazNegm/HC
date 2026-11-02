@@ -77,15 +77,22 @@ targetcli iscsi/iqn${iqn}/${tpg} set attribute cache_dynamic_acls=1
 targetcli iscsi/iqn${iqn}/${tpg} set attribute generate_node_acls=0
 # QSD5.344: CHAP is set on the initiator's ACL (generate_node_acls=0: the ACLs are what is checked; the old tpg-level
 # userid/password were never used).  One target per address: authentication of the target is on while any ACL of it
-# has a CHAP user, so a LUN without CHAP never switches it off for a LUN with CHAP on the same address.  'NULL' clears
-# a CHAP value in LIO.
-targetcli iscsi/iqn${iqn}/${tpg} set auth userid=NULL password=NULL >/dev/null 2>&1   # the old hard-coded tpg pair
+# has a CHAP user, so a LUN without CHAP never switches it off for a LUN with CHAP on the same address.
+# QSD5.346: a CHAP value is cleared with an EMPTY value ('set auth userid='): rtslib_fb (2.1.76) refuses the word 'NULL'
+# ("'NULL' is not a permitted value") and writes 'NULL' to configfs itself for an empty value.  One field per call and
+# the empty field last on the line: the configshell parser takes the next word as the value ('userid= password='
+# sets userid to the text 'password=').
+chapclear() {
+ targetcli "$1" set auth password= >/dev/null 2>&1
+ targetcli "$1" set auth userid= >/dev/null 2>&1
+}
+chapclear iscsi/iqn${iqn}/${tpg}   # the old hard-coded tpg pair
 if [ $nochap -eq 0 ]; then
  targetcli iscsi/iqn${iqn}/${tpg}/acls/$target set auth userid=$chapuser password=$chappas >/dev/null
  targetcli iscsi/iqn${iqn}/${tpg} set attribute authentication=1
  echo chap on for $target
 else
- targetcli iscsi/iqn${iqn}/${tpg}/acls/$target set auth userid=NULL password=NULL >/dev/null 2>&1
+ chapclear iscsi/iqn${iqn}/${tpg}/acls/$target
  cfsacls=/sys/kernel/config/target/iscsi/iqn${iqn}/tpgt_1/acls
  if [ -d $cfsacls ]; then
   chapacls=`cat $cfsacls/*/auth/userid 2>/dev/null | grep -v '^NULL$' | grep -c .`

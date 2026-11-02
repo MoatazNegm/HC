@@ -659,10 +659,50 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  return     
 
      
+def _alive(val):
+    return str(val) not in ('_1', '-1', '', 'None')
+
+def tombstonesonreturn(leaderip, myhostip):
+    # QSD5.346: a tombstone destroyedpool/<pool> written while this node was stopped never reached it: the sync request
+    # is pruned as soon as every ACTIVE node acknowledged it (the stopped node is not counted), and a returning known node
+    # runs restetcd (whole-etcd kinds only) + syncrequest, never the full copy of the etcdonly kinds (QSD5.345 proof: missing
+    # 15 min after the return, isinsync yes).  When such a node took the leadership later, its import loop had no tombstone
+    # and could take a stale copy of the deleted pool again.  So on return: (1) every tombstone of the leader is copied here;
+    # (2) a tombstone only this node has is dropped when the pool is alive on the leader again (pools/<pool> or
+    # ActPool/<pool>: imported on purpose with 'DGsetPool import', which deleted it on the leader while this node was away);
+    # (3) otherwise it is kept (this node's import loop keeps skipping that name).  Runs before the whole-etcd copies,
+    # because synckeys() ends the process (exit()) on a failed read.
+    try:
+        leaderstones = [x for x in get(leaderip, 'destroyedpool/', '--prefix')
+                        if isinstance(x, tuple) and str(x[0]).startswith('destroyedpool/')]
+        localstones = [x for x in get(myhostip, 'destroyedpool/', '--prefix')
+                       if isinstance(x, tuple) and str(x[0]).startswith('destroyedpool/')]
+    except Exception as e:
+        print('tombstonesonreturn: no read', e)
+        return
+    local = dict(localstones)
+    for key, val in leaderstones:
+        if local.get(key) != val:
+            put(myhostip, key, val)
+            print('tombstone copied', key)
+    leaderkeys = set(k for k, v in leaderstones)
+    for key in local:
+        if key in leaderkeys:
+            continue
+        pool = key.split('/', 1)[1]
+        if pool and any(_alive(get(leaderip, pfx + pool)[0]) for pfx in ('pools/', 'ActPool/')):
+            # exact key: etcddel.py with one argument also deletes keys named like the VALUE
+            subprocess.run(['etcdctl', '--endpoints=http://' + myhostip + ':2379', 'del', key],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=dict(os.environ, ETCDCTL_API='3'))
+            print('tombstone dropped, pool alive on the leader', key)
+        else:
+            print('tombstone kept (only here)', key)
+
 def restetcd(leader,leaderip, myhost,myhostip):
     print('restetcd is',leader,leaderip,myhost,myhostip)
     if myhost == leader:
         return
+    tombstonesonreturn(leaderip, myhostip)
     for sync in wholeetcd :
         if sync == 'Partnr':
             synckeys(leaderip, myhostip, 'Partner', 'Partner')
