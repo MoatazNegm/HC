@@ -32,9 +32,18 @@ def selecthost(poolinfo,readies):
     global leader, leaderip, myhost, myhostip, etcdip, stmapi
     mincount = 1000000000 
     selectedhost = 'nohost'
+    # QSD5.352 (QC 684): the next host of a pool is any ready node but the one that holds the pool now.  The leader skipped
+    # ITSELF, so a pool held by a follower got that follower as its "next" host (useless when it dies), and a pool the leader
+    # imported while it was alone kept poolnxt = the leader after the other node came back: when that leader was stopped the
+    # survivor had no assignment and did not import the pool for ~5 minutes.  An exported pool (from 'zpool import') carries
+    # the scanning node as its host, so it is the same rule as before for it.
+    owner = poolinfo.get('host', myhost) if isinstance(poolinfo, dict) else myhost
+    readyhosts = [ h[0].split('/')[1] for h in readies if isinstance(h, (list, tuple)) and len(h) > 0 and '/' in str(h[0]) ]
+    if owner not in readyhosts:
+        owner = myhost
     for hostinfo in readies:
         host = hostinfo[0].split('/')[1]
-        if myhost == host and len(readies) > 1  :
+        if owner == host and len(readies) > 1  :
             continue   ########  pass this since we are searching for the next host 
         counts = list(str(poolinfo['raids'])).count(host)
         if counts  < mincount:
@@ -304,11 +313,14 @@ def zpooltoimport(*args):
     #if len(readies) == 1:
     #    dels(leaderip, 'ActPool/'+notpname)
  
+ importedpools = set(str(p.get('name')) for p in pools if isinstance(p, dict))
  for poolinfo in cpools:
     pool = poolinfo['name']
     if 'pree' in pool:
      continue
-    if pool not in str(needtoimport):
+    # QSD5.352 (QC 684): an imported pool is always re-checked; poolnxt naming this leader (written while it was alone)
+    # kept the pool in needtoimport and was never moved to the node that came back
+    if pool not in str(needtoimport) or (pool in importedpools and len(readies) > 1):
         nxthost=selecthost(poolinfo,readies)
         print('nxthosts',nxthost)
         poolnxt=get(leaderip,'poolnxt/'+pool)[0]
