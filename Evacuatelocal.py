@@ -4,7 +4,12 @@ from etcddel import etcddel as deli
 from etcdput import etcdput as put 
 
 
-KEEP_PREFIXES = ('log/', 'sync/log/', 'notification', 'excepts/')
+# QSD5.352 r2 (validator R1): sync/evacuatehost/ stays too.  The request sync/evacuatehost/syncfn_setall_<host>_<user>/request
+# names the host between '_' and matched the whole-word pattern, so the leader deleted the request itself: a follower that
+# had not run it yet never ran removetargetdisks.sh / hostlost.sh for the removed node (stale iSCSI sessions and disks with
+# 3+ nodes), and checksyncs wrote the leader's done mark .../request/<leader> again afterwards.  The leader's normal pruning
+# removes the request once every active node has acknowledged it.
+KEEP_PREFIXES = ('log/', 'sync/log/', 'notification', 'excepts/', 'sync/evacuatehost/')
 
 def delhostkeys(etcdip, hostn):
  # QSD5.352 (QC 687, 699): after an evacuation the leader kept alias/, cversion/, ipaddr/, configured/, excepts, ntp, ports,
@@ -28,7 +33,11 @@ def delhostkeys(etcdip, hostn):
   if key.startswith(KEEP_PREFIXES):
    continue
   if pat.search(key) or pat.search(value):
-   subprocess.run(['etcdctl','--endpoints=http://'+etcdip+':2379','del',key], stdout=subprocess.PIPE)
+   try:
+    subprocess.run(['etcdctl','--endpoints=http://'+etcdip+':2379','del',key], stdout=subprocess.PIPE, timeout=10)
+   except Exception as e:
+    print('evacuate cleanup: delete of', key, 'failed', e)
+    continue
    count += 1
  print('evacuate cleanup:', count, 'keys of', hostn, 'removed from', etcdip)
  return count
