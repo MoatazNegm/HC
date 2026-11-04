@@ -64,6 +64,17 @@ def getippos(vtype):
         return 9
     else: 
         return 0
+def registered(name, etcds):
+    # QSD5.352 (QC 706): a volume counts as registered only when a key ends in /<name> and its value is a real record
+    # (7 or more '/' fields).  The test was 'name in str(etcds)': a dummy key with the value _1 (old VolumeActivateHome) or
+    # any other key or value that contains the name kept a lost record from ever being written again.
+    for e in etcds:
+        if not isinstance(e, (list, tuple)) or len(e) < 2:
+            continue
+        if str(e[0]).split('/')[-1] == name and len(str(e[1]).split('/')) >= 7:
+            return True
+    return False
+
 def getdirtyvols(vtype, etcds, replis, dockers):
     global leader, leaderip, myhost, myhostip, etcdip
     cmdline = '/TopStor/getvols.sh '+vtype
@@ -85,7 +96,7 @@ def getdirtyvols(vtype, etcds, replis, dockers):
             if reslist[1] in str(etcdactive):
                 dirtyset.add(res)
                 print('here2', res)
-        if reslist[1] not in str(etcds):
+        if not registered(reslist[1], etcds):
             dirtyset.add(res)
         for dckr in dockers.split('\n'):
             dckrip = dckr.split(' ')[-1].split('-')[-1]
@@ -271,6 +282,17 @@ def volumecheck(etcds, replis, *args):
  print('----------------------------------------------------')
  print(etcds,'\n',dockers)
  inspectall(dockers)
+ # QSD5.352 (QC 706): drop registry keys without a record (value _1 / -1 / empty, written by the old VolumeActivateHome);
+ # the leader only, its etcd is the one every node copies.
+ if myhost == leader:
+  dummies = [ e[0] for e in etcds if isinstance(e, (list, tuple)) and len(e) > 1 and str(e[0]).startswith('volumes/')
+              and str(e[1]).strip() in ('_1', '-1', '') ]
+  for key in dummies:
+   print('removing the empty volume record', key)
+   dels(leaderip, key)
+  if dummies:
+   dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
+   etcds = [ e for e in etcds if not (isinstance(e, (list, tuple)) and len(e) > 1 and e[0] in dummies) ]
  jobs = [lambda: nfsnew(etcds, replis, dockers), lambda: cifs(etcds, replis, dockers),
          lambda: homes(etcds, replis, dockers), lambda: iscsi(etcds, replis)]
  def runjob(j):

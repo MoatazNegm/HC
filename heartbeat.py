@@ -41,6 +41,16 @@ def getnextlead():
 
 readyseen = None
 
+def nodeevent(code, severity, *params):
+ # QSD5.352 (QC 707, 605, 681): the leader announces a node that is ready again (a return or a join: Partsu01 'Node <host>
+ # completed joining cluster with ip <ip>') and a lost node that was not the leader (Partst02 'Node <host> is down';
+ # leaderlost.sh only sent it when the LEADER was lost).  Only the leader sends them, so every event is logged once.
+ try:
+  subprocess.run(['docker','exec','etcdclient','/TopStor/logmsg.py',code,severity,'system']+[str(p) for p in params],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+ except Exception as e:
+  print('node event', code, params, e)
+
 def leadernextlead(knowns):
  # LEADER ONLY.  The leader names the next leader: a node that has just become ready, or -- when the
  # current one is not a ready node any more (lost, evacuated, this node itself after a take over, None) --
@@ -51,6 +61,8 @@ def leadernextlead(knowns):
  names = [ o[0] for o in others ]
  new = [] if readyseen is None else [ o for o in others if o[0] not in readyseen ]
  readyseen = set(names)
+ for host, ip in new:
+  nodeevent('Partsu01', 'info', host, ip)
  if len(others) == 0:
   return
  current = str(get(leaderip,'nextlead/er')[0])
@@ -117,6 +129,8 @@ def hostlost(host, hostip):
                 
                 else:
                     dels(leaderip, 'pools',host)
+                    if myhost == leader:
+                        nodeevent('Partst02', 'warning', host)
                 dels(etcd, 'cpuperf/'+host)
                 cmdline='/pace/hostlost.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+host
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')

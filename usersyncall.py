@@ -26,7 +26,10 @@ def thread_add(user,syncip, tosync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip,pport
  # QSD5.345: a user that is gone on the leader reads back as the '_1' placeholder string, not a (key, value) pair; the
  # index errors below then aborted the whole sync pass (same as the group add, groupsyncall.thread_add)
- if not isinstance(user, (list, tuple)) or len(user) < 2 or len(str(user[1]).split('/')) < 6:
+ # QSD5.352 (QC 685): users/usersauth (Priv.py) keeps the first four fields (uid:gid:, pool, name, size) and appends the
+ # privileges it was given, so a record like 1004:1004:/NoHome/qu2/1G/Logs-true has 5 fields.  The old limit of 6 skipped
+ # such a user for good: no follower (or joining node) ever created it.  4 fields are enough for the copy.
+ if not isinstance(user, (list, tuple)) or len(user) < 2 or len(str(user[1]).split('/')) < 4:
   print('user add skipped, user not on the leader any more:', user)
   return
  username=user[0].replace('usersinfo/','')
@@ -68,10 +71,17 @@ def thread_add(user,syncip, tosync='pullavail'):
  homePool = usersplit[1]
  userpass = userhash
  size = usersplit[3]
- HomeAddr = usersplit[-3]
- HomeSubnet = usersplit[-2]
- active = usersplit[-1]
- permissions = ",".join(usersplit[4:-3])
+ if len(usersplit) >= 8:
+  HomeAddr = usersplit[-3]
+  HomeSubnet = usersplit[-2]
+  active = usersplit[-1]
+  permissions = ",".join(usersplit[4:-3])
+ else:
+  # short record (see above): no address fields; a copy (pullsync) does not create the home anyway
+  HomeAddr, HomeSubnet, active = 'no', 'no', 'no'
+  permissions = ",".join(usersplit[4:])
+ if not permissions:
+  permissions = 'no'      # an empty argument vanishes in UnixAddUser's 'echo $@ | awk' and shifts the request user
  cmdline=['/TopStor/UnixAddUser',leaderip,username, homePool, groupsarg,userhash, size, HomeAddr, HomeSubnet, tosync, userid,usergd,active, permissions,'system']
  print('***************************')
  print(cmdline)

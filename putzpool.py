@@ -86,7 +86,7 @@ def putzpool():
  # dsk = dev.split(':')[0]
  # if 'sd' in dsk:
  #  drives.append(dsk) 
- cmdline=['/sbin/zfs','list','-t','snapshot,filesystem,volume','-o','name,creation,used,quota,usedbysnapshots,refcompressratio,prot:kind,available,referenced,status:mount,snap:type,partner:receiver,partner:sender,compression,dedup','-H']
+ cmdline=['/sbin/zfs','list','-t','snapshot,filesystem,volume','-o','name,creation,used,quota,usedbysnapshots,refcompressratio,prot:kind,available,referenced,status:mount,snap:type,partner:receiver,partner:sender,compression,dedup,ip:addr,ip:subnet','-H']
  result=subprocess.run(cmdline,stdout=subprocess.PIPE)
  zfslistall=str(result.stdout)[2:][:-3].replace('\\t',' ').split('\\n')
  #lists=[lpools,ldisks,ldefdisks,lavaildisks,lfreedisks,lsparedisks,lraids,lvolumes,lsnapshots]
@@ -150,7 +150,9 @@ def putzpool():
      snaplist=[]
      snapperiod=[]
      snapperiod=[[x[0],x[1]] for x in periods if volname in x[0]]
-     vdict={'fullname':volume[0],'name':volname, 'pool': b[0], 'host':myhost, 'creation':' '.join(volume[1:4]+volume[5:6]),'time':volume[4], 'used':volume[6], 'quota':volume[7], 'usedbysnapshots':volume[8], 'refcompressratio':volume[9], 'prot':volume[10],'available':volume[11], 'referenced':volume[12],'statusmount':volume[13], 'compression':(volume[17] if len(volume) > 17 else '-'), 'dedup':(volume[18] if len(volume) > 18 else '-'), 'snapshots':snaplist, 'snapperiod':snapperiod}
+     vdict={'fullname':volume[0],'name':volname, 'pool': b[0], 'host':myhost, 'creation':' '.join(volume[1:4]+volume[5:6]),'time':volume[4], 'used':volume[6], 'quota':volume[7], 'usedbysnapshots':volume[8], 'refcompressratio':volume[9], 'prot':volume[10],'available':volume[11], 'referenced':volume[12],'statusmount':volume[13], 'compression':(volume[17] if len(volume) > 17 else '-'), 'dedup':(volume[18] if len(volume) > 18 else '-'), 'snapshots':snaplist, 'snapperiod':snapperiod, 'zipaddress':(volume[19] if len(volume) > 19 else '-'), 'zsubnet':(volume[20] if len(volume) > 20 else '-')}
+     # QSD5.352 (QC 706): ip:addr / ip:subnet of the dataset, so volumesinfo keeps the address of a volume whose registry
+     # record (volumes/<type>/...) is missing for a while (take-over, return); allphysicalinfo uses them only then
      if 'CIFS_' in volume[10]:
         cmdline = 'zfs get ip:addr -H '+volume[0]
         ipaddr=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()[2]
