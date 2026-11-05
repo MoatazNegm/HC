@@ -280,6 +280,20 @@ def iscsi(etcds, replis):
    cmdline='/TopStor/iscsi.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[2]+' '+reslist[3]+' ISCSI '+reslist[4]+' '+reslist[5]+' '+reslist[6]+' '+reslist[7]
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
 
+def _runto(cmd, timeout=10, out=True):
+    # r9b (validator r9 V7): (returncode, stdout) or None when the command did not end in <timeout> s.  The child is killed
+    # and NOT waited for (subprocess.run(timeout=) waits after the kill, and a zfs stuck in the kernel never ends).
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE if out else subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        o, _ = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            p.kill()
+        except Exception:
+            pass
+        return None
+    return p.returncode, (o or b'').decode('utf-8')
+
 def homesweep(etcds, minage=30):
     # QSD5.352 r9 (prover D5, validator r8 R3): a HOMEE-<ip> container of this node that serves a home which is no longer
     # an ACTIVE home on <ip> (moved to another address, disabled, deleted) was never touched: VolumeCheck only starts what
@@ -295,7 +309,13 @@ def homesweep(etcds, minage=30):
     # homes).  Only containers older than <minage> s (one that is just being started or changed is left to its script).
     global leader, leaderip, myhost, myhostip
     import re, datetime
-    names = subprocess.run(['docker','ps','--format','{{.Names}}'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode('utf-8').split()
+    # r9b (validator r9 V7): every docker / zfs call of the sweep has a timeout (a hung zfs on a suspended pool held the whole
+    # VolumeCheck pass); a timeout = unknown, nothing is done
+    r = _runto(['docker','ps','--format','{{.Names}}'])
+    if r is None:
+        print('home sweep: docker ps timed out')
+        return []
+    names = r[1].split()
     records = {}
     for e in etcds:
         if isinstance(e, (list, tuple)) and len(e) > 1:
@@ -306,7 +326,7 @@ def homesweep(etcds, minage=30):
             continue
         ip = cname[len('HOMEE-'):]
         try:
-            info = json.loads(subprocess.run(['docker','inspect',cname],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode('utf-8'))
+            info = json.loads(_runto(['docker','inspect',cname])[1])     # a timeout (None) = unknown: skipped
             info = info[0] if isinstance(info, list) else info
         except Exception:
             continue
@@ -337,10 +357,12 @@ def homesweep(etcds, minage=30):
             else:
                 if not os.path.isdir('/'+pool) or recactive:
                     unknown = True
-                elif subprocess.run(['zfs','list','-H','-o','name',pool+'/'+vol],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode == 0:
-                    unknown = True
                 else:
-                    stale.append(src)
+                    r = _runto(['zfs','list','-H','-o','name',pool+'/'+vol], out=False)
+                    if r is None or r[0] == 0:      # dataset there, or zfs did not answer: unknown
+                        unknown = True
+                    else:
+                        stale.append(src)
         if unknown or not stale:
             continue
         with open('/root/volumecheck.sweep','a') as f:
