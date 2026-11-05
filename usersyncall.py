@@ -21,6 +21,40 @@ def localgroup(name):
  except Exception:
   return False
 
+# QSD5.352 r9c (prover r4 D8): a usersinfo value that is no user record.  A HOME create for a name without a record
+# (volumes/create type=HOME, before r9) stored usersinfo/<home name> = '_1///<size>': 4 '/' fields, so it passed the
+# check below, and 'usergd=userinfo[1]' raised IndexError.  The whole sync pass died there on every loop: a joining
+# node never finished its initial sync (isinsync no), the users that sort after the record were never created and users
+# deleted on the leader were never removed (the delete loop runs after the add loop).  A user record is
+# '<uid>:<gid>:/<pool>/<name>/<size>[/...]' (UnixAddUser; Priv.py and VolumeQuotaHOME keep the first four fields).
+# Anything else is skipped and logged once (per name and value) in SKIPLOG; it is not deleted here (the leader's
+# VolumeDeleteHOME removes it with the home, an existing one is removed by hand).
+SKIPLOG = '/root/usersyncskip.log'
+_skipped = set()
+def userrecord(value):
+ import re
+ fields = str(value).split('/')
+ return len(fields) >= 4 and re.match(r'^[0-9]+:[0-9]+:$', fields[0]) is not None
+
+def skiprecord(key, value):
+ line = str(key)+' = '+repr(str(value))
+ if line in _skipped:
+  return
+ _skipped.add(line)
+ try:
+  try:
+   with open(SKIPLOG) as f:
+    if any(l.rstrip('\n').endswith(' '+line+' skipped: no user record (<uid>:<gid>:/<pool>/<name>/<size>)') for l in f):
+     return
+  except FileNotFoundError:
+   pass
+  from datetime import datetime
+  with open(SKIPLOG, 'a') as f:
+   f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+line+' skipped: no user record (<uid>:<gid>:/<pool>/<name>/<size>)\n')
+  print('user add skipped, no user record:', line)
+ except Exception as e:
+  print('user add skipped, no user record:', line, e)
+
 def thread_add(user,syncip, tosync='pullavail'):
  global myusers
  global allusers, leader ,leaderip, myhost, myhostip,pport
@@ -32,8 +66,11 @@ def thread_add(user,syncip, tosync='pullavail'):
  if not isinstance(user, (list, tuple)) or len(user) < 2 or len(str(user[1]).split('/')) < 4:
   print('user add skipped, user not on the leader any more:', user)
   return
- username=user[0].replace('usersinfo/','')
+ username=str(user[0]).replace('usersinfo/','')
  if 'NoUser' == username:
+  return
+ if not userrecord(user[1]):
+  skiprecord(user[0], user[1])
   return
  with open('/root/usersync2','w') as f:
   f.write(str(user)+' + '+str(username)+'\n')
@@ -146,8 +183,11 @@ def usersyncall(tosync='pullavail'):
  leader=get(leaderip,'leader','--prefix')
  if myhost not in str(leader) or 'pullsync' in tosync:
   for user in myusers:
+   # r9c (D8): one bad entry must not stop the pass (a '_1' placeholder or a pair without a key)
+   if not isinstance(user, (list, tuple)) or len(user) < 2:
+     continue
    if user not in allusers:
-     user=user[0].replace('usersinfo/','')
+     user=str(user[0]).replace('usersinfo/','')
      thread_del(user, syncip, tosync)
 
 def pulladminhash(username='admin'):

@@ -9,7 +9,11 @@ from etcdput import etcdput as put
 # had not run it yet never ran removetargetdisks.sh / hostlost.sh for the removed node (stale iSCSI sessions and disks with
 # 3+ nodes), and checksyncs wrote the leader's done mark .../request/<leader> again afterwards.  The leader's normal pruning
 # removes the request once every active node has acknowledged it.
-KEEP_PREFIXES = ('log/', 'sync/log/', 'notification', 'excepts/', 'sync/evacuatehost/')
+# QSD5.352 r9c (prover r4 D7): only the request and its acknowledgements (sync/evacuatehost/syncfn_..., both forms:
+# TopStor/Evacuate.py syncfn_setall_<host>_<user>, pace/Evacuateleader.py syncfn_setall_<host>_<ip>_<user>).  The whole
+# sync/evacuatehost/ prefix also kept the removed node's initial-sync mark sync/evacuatehost/initial/request/<host>; the
+# leader's pruning skips every 'initial' key, so it stayed for good and survived the rejoin.
+KEEP_PREFIXES = ('log/', 'sync/log/', 'notification', 'excepts/', 'sync/evacuatehost/syncfn_')
 
 def delhostkeys(etcdip, hostn):
  # QSD5.352 (QC 687, 699): after an evacuation the leader kept alias/, cversion/, ipaddr/, configured/, excepts, ntp, ports,
