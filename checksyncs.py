@@ -662,6 +662,22 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
 def _alive(val):
     return str(val) not in ('_1', '-1', '', 'None')
 
+def nextleadonreturn(leaderip, myhostip):
+    # QSD5.352 r10 (QC 680): a returning known node runs restetcd + syncrequest only, never the initial copy of nextlead/er,
+    # and the leader posts no new nextlead request when its value did not change (the returned node was the next leader
+    # before it stopped).  The node kept '_1' and, when the leader was stopped next, its heartbeat never took over.  So the
+    # leader's value is copied here on return (only a real '<host>/<ip>' value; 'None' / '_1' are left alone).
+    try:
+        value = str(get(leaderip, 'nextlead/er')[0])
+    except Exception as e:
+        print('nextleadonreturn: no read', e)
+        return
+    if 'dhcp' not in value or '/' not in value:
+        return
+    if str(get(myhostip, 'nextlead/er')[0]) != value:
+        put(myhostip, 'nextlead/er', value)
+        print('nextlead/er copied from the leader', value)
+
 def tombstonesonreturn(leaderip, myhostip):
     # QSD5.346: a tombstone destroyedpool/<pool> written while this node was stopped never reached it: the sync request
     # is pruned as soon as every ACTIVE node acknowledged it (the stopped node is not counted), and a returning known node
@@ -703,6 +719,7 @@ def restetcd(leader,leaderip, myhost,myhostip):
     if myhost == leader:
         return
     tombstonesonreturn(leaderip, myhostip)
+    nextleadonreturn(leaderip, myhostip)
     for sync in wholeetcd :
         if sync == 'Partnr':
             synckeys(leaderip, myhostip, 'Partner', 'Partner')
