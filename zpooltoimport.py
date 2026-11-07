@@ -268,10 +268,14 @@ def zpooltoimport(*args):
     # the cache (L2ARC) must sit on the node that owns the pool: a cache disk of another -- or a lost -- node is
     # replaced by a local one.  DGsetPool did this for a manual import only; a pool taken over after its owner
     # died comes through here.
+    # QSD5.352 r10 (QC 631): in the background, in 'wait' mode: the cluster info lists the pool under this node only after
+    # the pools sync below and the next putzpool; run in line (and once) it found no pool and the cache stayed UNAVAIL.
     try:
-        res = subprocess.run(['/usr/bin/python3','/TopStor/fixcachelocality.py',leaderip,pool,myhost],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
         with open('/root/fixcachelocality.log','a') as f:
-            f.write(str(stamp())+' '+pool+' '+myhost+'\n'+res.stdout.decode('utf-8','replace')+'\n')
+            f.write(str(stamp())+' '+pool+' '+myhost+' (wait mode, background)\n')
+            f.flush()
+            subprocess.Popen(['/usr/bin/python3','/TopStor/fixcachelocality.py',leaderip,pool,myhost,'wait'],
+                             stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
     except Exception as e:
         print('fixcachelocality failed:',e)
     put(etcdip, 'dirty/volume','0')
