@@ -141,6 +141,9 @@ def thread_del(username,syncip, pullsync='pullavail'):
   # (deleting usr1 also deleted usr10..usr16)
   dels(syncip,'usersinfo/'+username)
   dels(syncip,'usershash/'+username)
+  # QSD5.352 r10 (QC 678): the login token record of the deleted user stayed in this node's etcd (fapi users/userdel
+  # deletes login/<user> in the leader's etcd only); this node's etcd serves the logins when it becomes the leader
+  dels(syncip,'login/'+username)
 
 def followadminhash(leaderip, myhostip):
  """admin has no usersinfo, so no UnixAddUser carries its hash to a follower: a follower that never ran a full user
