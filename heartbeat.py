@@ -40,6 +40,46 @@ def getnextlead():
  return nextleader , nextleaderip
 
 readyseen = None
+leadernext = ''        # follower: the last nextlead/er '<host>/<ip>' read from the leader's etcd (see followernextlead)
+nextcheck = 0
+
+def followernextlead():
+ # FOLLOWER ONLY, every 30 s.  QSD5.352 r10 (QC 680): the follower's own copy of nextlead/er could be '_1' (a return whose
+ # sync was never posted, see leadernextlead) while the leader held the right value.  The follower keeps the leader's
+ # value in memory and repairs its own copy with it, so a later leader loss finds the next leader.
+ global etcd, leaderip, leadernext, nextcheck
+ if stamp() < nextcheck:
+  return
+ nextcheck = stamp() + 30
+ value = str(get(leaderip,'nextlead/er')[0])
+ host, ip = splitnext(value)
+ if not host or not ip:
+  return
+ leadernext = value
+ local = str(get(etcd,'nextlead/er')[0])
+ if local != value:
+  put(etcd, 'nextlead/er', value)
+  with open('/root/heartproblem','a') as f:
+   f.write('\nnextlead/er repaired from the leader: '+local+' -> '+value+'\n')
+
+def fallbacknext(losthost):
+ # QSD5.352 r10 (QC 680): the leader is lost and this node's nextlead/er names nobody.  Use the leader's last value kept in
+ # memory; else the ready nodes this node knows (itself included), the lost leader left out, first by name, so every
+ # surviving node picks the same one.  Returns ('', '') when nobody is left.
+ host, ip = splitnext(leadernext)
+ if host and ip and host != losthost:
+  return host, ip, 'leader value kept in memory'
+ cands = { myhost: myhostip }
+ for k in get(etcd,'ready','--prefix'):
+  if isinstance(k, (list, tuple)) and len(k) == 2 and str(k[0]).startswith('ready/'):
+   h = str(k[0]).split('/')[1]
+   if 'dhcp' in h and h != losthost and h not in cands:
+    cands[h] = str(k[1])
+ cands.pop(losthost, None)
+ if not cands:
+  return '', '', 'no ready node'
+ host = sorted(cands)[0]
+ return host, cands[host], 'first ready node by name'
 
 def nodeevent(code, severity, *params):
  # QSD5.352 (QC 707, 605, 681): the leader announces a node that is ready again (a return or a join: Partsu01 'Node <host>
@@ -74,9 +114,13 @@ def leadernextlead(knowns):
  else:
   choice = [ o for o in others if o[0] == curhost ][0]
  value = choice[0]+'/'+choice[1]
- if current == value:
+ # QSD5.352 r10 (QC 680): a node that is ready AGAIN (a return) may be the next leader already: the value did not change,
+ # so no sync request was posted and the returned node kept nextlead/er = '_1' in its own etcd (its local copy was not
+ # restored).  When the leader was stopped next, that node's heartbeat read '_1', never ran leaderlost.sh and the cluster
+ # stayed without a leader.  A newly ready node now always gets the sync request, changed value or not.
+ if current == value and len(new) == 0:
   return
- print('next leader is now', value, 'it was', current)
+ print('next leader is now', value, 'it was', current, 'new ready nodes', [ n[0] for n in new ])
  put(leaderip, 'nextlead/er', value)
  dels(leaderip,'sync/nextlead/Add_er','--prefix')
  dosync('sync/nextlead/Add_er_'+choice[0]+'::'+choice[1]+'/request','nextlead_'+str(stamp()))
@@ -95,6 +139,10 @@ def hostlost(host, hostip):
                     dels(myhostip, 'vol',host)
                     print('leader lost. nextleader is ',nextleader, 'while my host',myhost)
                     nextleader, nextleaderip =  splitnext(get(etcd,'nextlead/er')[0])
+                    if not nextleader:
+                        nextleader, nextleaderip, why = fallbacknext(host)
+                        with open('/root/heartproblem','a') as f:
+                            f.write('\nnextlead/er names nobody; next leader by fallback ('+why+'): '+str(nextleader)+' '+str(nextleaderip)+'\n')
                     if nextleader:
                         if not nextleaderip:
                             nextleaderip = myhostip if nextleader == myhost else str(get(etcd,'ready/'+nextleader)[0])
@@ -177,6 +225,8 @@ def heartbeat(*args):
            hostlost(leader, leaderip)
         elif myhost == leader:
            leadernextlead(knowns)
+        else:
+           followernextlead()
         for known in knowns:
             host = known[0].split('/')[1]
             if host == myhost:

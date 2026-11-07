@@ -46,7 +46,9 @@ if [ $? -ne 0 ]; then
  targetcli iscsi/ create iqn.2016-03.com.${ipdom}:data &>/dev/null
 fi
 pdisk=`targetcli ls backstores/block`
-echo $pdisk | grep $disk 
+# QSD5.352 r10 (QC 652): the backstore of THIS volume by its full name; 'grep $disk' matched zd1 inside zd16-<host>-<other>,
+# so a new LUN on zd1 got no backstore of its own and was never exported or mapped
+echo "$pdisk" | grep -q -- "o- $diskids "
 if [ $? -ne 0 ];
 then 
  targetcli backstores/block create $diskids /dev/$disk
@@ -65,8 +67,12 @@ cluns=`targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls`
 echo $cluns | grep $diskids 
 if [ $? -ne 0 ];
 then
- # the number of LUNs already mapped for this initiator (the old 'echo $cluns | wc -l' always counted one line = 1)
- nextlun=`targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls | grep -c mapped_lun`
+ # QSD5.352 r10 (QC 652): the lowest mapped LUN number this initiator does not use yet.  The count of mapped LUNs
+ # (QSD5.344) was taken as the next number: after a LUN in the middle was deleted, the count named a number still in
+ # use (mapped_lun1 of the next LUN), the create failed or doubled a mapping and the new LUN was not mapped right.
+ used=" `targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls 2>/dev/null | grep -o 'mapped_lun[0-9][0-9]*' | sed 's/mapped_lun//' | tr '\n' ' '`"
+ nextlun=0
+ while echo "$used" | grep -q " $nextlun "; do nextlun=$((nextlun+1)); done
  echo targetcli iscsi/iqn${iqn}/${tpg}/acls/$target = $nextlun
  targetcli iscsi/iqn${iqn}/${tpg}/acls/$target create mapped_lun=$nextlun tpg_lun_or_backstore=/backstores/block/$diskids write_protect=0
  echo targetcli iscsi/iqn${iqn}/${tpg}/acls/$target create mapped_lun=$nextlun tpg_lun_or_backstore=/backstores/block/$diskids write_protect=0
