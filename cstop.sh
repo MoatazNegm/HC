@@ -53,5 +53,12 @@ for p in `/pace/cpoolowner.sh mine $me`; do
 		log "pool $p: export refused or timed out (busy?) -- left imported"
 	fi
 done
+# QSD5.352 r10c (QC proof E-1): stop this node's etcd cleanly as the last step.  The outer container stop used to kill it
+# (SIGKILL with the nested dockerd), which can leave a torn WAL tail that the next start has to repair; a node that came
+# back from a stop then waited for ever for an etcd that had exited at start.  The pools come first: only after them.
+if docker ps -q -f name=^etcd$ 2>/dev/null | grep -q .
+then
+	timeout 25 docker stop -t 15 etcd >> /root/cstop.log 2>&1 && log "etcd stopped cleanly" || log "etcd stop failed or timed out"
+fi
 log "done"
 exit 0

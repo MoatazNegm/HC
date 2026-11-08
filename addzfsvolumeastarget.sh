@@ -29,6 +29,17 @@ lunid=`echo $@ | awk '{print $8}'`
 is_container 2>/dev/null && /pace/czvoldev.sh
 disk=`ls -l /dev/zvol/${pool}/$vol | awk -F'/' '{print $NF}'`
 echo disk $disk
+# QSD5.352 r10c (QC proof S-1 / G-2, suspected): an initiator list of two had 0 ACLs on the address 60 s after a
+# volumes/config (542.1, 547.2), and after a take-over one of two LUNs of one address was not mapped (554.1); nothing
+# said why.  Every call leaves one line per step in /root/iscsitarget.log (time, volume, zvol, backstore, initiator,
+# the mapped LUNs of the initiator at the end).  A volume whose zvol node is not there is not exported half
+# (a backstore '-<host>-<vol>' with no device was made before): it is logged and the call ends with rc 1.
+tlog() { [ -f /root/iscsitarget.log ] && [ `stat -c %s /root/iscsitarget.log 2>/dev/null || echo 0` -gt 5000000 ] && mv -f /root/iscsitarget.log /root/iscsitarget.log.1; echo "`date '+%F %T'` $pool/$vol $*" >> /root/iscsitarget.log; }
+if [ -z "$disk" ]; then
+ tlog "NOT EXPORTED: no zvol device for /dev/zvol/$pool/$vol (disk '$disk'), initiator $target"
+ exit 1
+fi
+[ -b /dev/$disk ] || tlog "WARNING: /dev/$disk (the zvol of /dev/zvol/$pool/$vol) is not a block device here"
 #chapuser='iqn.1991-05.com.microsoft:desktop-jckvhk3'
 #chapuser='MoatazNegm'
 #chappass='MezoPass1234'
@@ -63,6 +74,7 @@ targetcli iscsi/iqn.2016-03.com.$ipdom:data/${tpg}/portals delete 0.0.0.0 3260
 targetcli iscsi/iqn${iqn}/${tpg}/luns/ create /backstores/block/$diskids  
 targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
 echo targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
+targetcli ls iscsi/iqn${iqn}/${tpg}/acls/$target >/dev/null 2>&1 || tlog "ACL of '$target' could not be made on iqn${iqn} (not a valid initiator name?)"
 cluns=`targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls`
 echo $cluns | grep $diskids 
 if [ $? -ne 0 ];
@@ -77,6 +89,7 @@ then
  targetcli iscsi/iqn${iqn}/${tpg}/acls/$target create mapped_lun=$nextlun tpg_lun_or_backstore=/backstores/block/$diskids write_protect=0
  echo targetcli iscsi/iqn${iqn}/${tpg}/acls/$target create mapped_lun=$nextlun tpg_lun_or_backstore=/backstores/block/$diskids write_protect=0
 fi
+tlog "zvol $disk backstore $diskids address $ipaddr:$portalport initiator $target: `targetcli ls iscsi/iqn${iqn}/${tpg}/acls/$target 2>&1 | grep -o 'mapped_lun[0-9]* [^]]*' | tr '\n' ';'`"
 targetcli iscsi/iqn${iqn}/${tpg} set attribute demo_mode_write_protect=0 
 targetcli iscsi/iqn${iqn}/${tpg} set attribute cache_dynamic_acls=1
 # only the initiators listed on the LUN (the acls created above) may log in: generate_node_acls=1 gave every other IQN a dynamic ACL with all LUNs mapped

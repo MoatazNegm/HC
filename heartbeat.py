@@ -51,6 +51,7 @@ def followernextlead():
  if stamp() < nextcheck:
   return
  nextcheck = stamp() + 30
+ followeraliases()      # r10c (B-1)
  value = str(get(leaderip,'nextlead/er')[0])
  host, ip = splitnext(value)
  if not host or not ip:
@@ -61,6 +62,34 @@ def followernextlead():
   put(etcd, 'nextlead/er', value)
   with open('/root/heartproblem','a') as f:
    f.write('\nnextlead/er repaired from the leader: '+local+' -> '+value+'\n')
+
+def followeraliases():
+ # FOLLOWER ONLY, with followernextlead (every 30 s).  QSD5.352 r10c (QC proof B-1, 525.2/528.2/529.1): the follower's own
+ # copies of the node aliases (alias/<host>) went stale: its own alias after a return (docker_setup wrote it to the
+ # leader only and marked the sync done for itself) and another node's alias (529.1: after a take-over the new cluster
+ # etcd, the follower's old copy, named zfs1 by its host name instead of q529l).  Copy every alias the leader has that
+ # differs here.  Only on a good read (a list of ('alias/<host>', value) pairs); an alias the leader does not have is
+ # not deleted (a read that missed keys must not remove anything).
+ global etcd, leaderip
+ theirs = get(leaderip, 'alias', '--prefix')
+ if not isinstance(theirs, list) or '_1' in theirs or '-1' in theirs:
+  return
+ pairs = {}
+ for k in theirs:
+  if isinstance(k, (list, tuple)) and len(k) == 2 and str(k[0]).startswith('alias/dhcp'):
+   pairs[str(k[0])] = str(k[1])
+ if not pairs:
+  return
+ mine = {}
+ for k in get(etcd, 'alias', '--prefix'):
+  if isinstance(k, (list, tuple)) and len(k) == 2:
+   mine[str(k[0])] = str(k[1])
+ for key, value in pairs.items():
+  if value in ('', '_1', '-1', 'None') or mine.get(key) == value:
+   continue
+  put(etcd, key, value)
+  with open('/root/heartproblem','a') as f:
+   f.write('\n'+key+' repaired from the leader: '+str(mine.get(key, 'missing'))+' -> '+value+'\n')
 
 def fallbacknext(losthost):
  # QSD5.352 r10 (QC 680): the leader is lost and this node's nextlead/er names nobody.  Use the leader's last value kept in

@@ -142,6 +142,22 @@ def memberimportdir(pool, disks):
   return ''
  return impdir
 
+lastdecision = {}
+def decision(pool, why):
+ # QSD5.352 r10c (QC proof T1): a pool assigned here (poolnxt) was not imported for 312 s once (z1) and within 15 s the
+ # next time (z2), and nothing said why.  Every assigned pool's decision is logged with a time stamp to
+ # /root/zpooltoimport.log when it changes (this runs every 9 s), so the next run shows which test skipped it.
+ if lastdecision.get(pool) == why:
+  return
+ lastdecision[pool] = why
+ try:
+  if os.path.exists('/root/zpooltoimport.log') and os.path.getsize('/root/zpooltoimport.log') > 5000000:
+   os.replace('/root/zpooltoimport.log', '/root/zpooltoimport.log.1')
+  with open('/root/zpooltoimport.log','a') as f:
+   f.write(subprocess.run(['date','+%F %T'],stdout=subprocess.PIPE).stdout.decode().strip()+' '+myhost+' '+pool+': '+why+'\n')
+ except Exception:
+  pass
+
 def zpooltoimport(*args):
  global leader, leaderip, myhost, myhostip, etcdip
  if args[0]=='init':
@@ -198,27 +214,34 @@ def zpooltoimport(*args):
   for poolline in needtoimport:
    pool = poolline[0].replace('poolnxt/','')
    if pool in str(pools):
+    holder = [ str(v.get('host','?')) for v in pools if isinstance(v, dict) and v.get('name') == pool ]
+    decision(pool, 'skipped: the cluster pools list still has it (host '+(','.join(holder) or 'substring match')+')')
     continue
    if foreignpool(pool):
     print('pool of another cluster, not imported', pool)
+    decision(pool, 'skipped: pool of another cluster')
     dels(leaderip, 'poolnxt', pool)
     dels(leaderip, 'pools', pool)
     continue
    if str(get(leaderip,'destroying/'+pool)[0]) != '_1':
     print('pool is being destroyed, not imported', pool)
+    decision(pool, 'skipped: being destroyed')
     continue
    if destroyedpool(pool):
     print('pool was deleted, a stale copy is not imported', pool)
+    decision(pool, 'skipped: tombstoned (destroyedpool)')
     dels(leaderip, 'poolnxt/'+pool)
     continue
    if ownedbylivepeer(pool):
     print('pool is imported and owned by a live node, not taken over', pool)
+    decision(pool, 'skipped: imported and owned by a live node')
     continue
    print('pool to be imported now', pool)
    # the assignment may have been withdrawn since the list was read (DGdestroyPool exports the pool for a moment): a pool that
    # is being destroyed must not be taken over here (QSD5.325)
    if str(get(leaderip,'poolnxt/'+pool)[0]) != myhost:
     print('assignment of', pool, 'withdrawn, not imported')
+    decision(pool, 'skipped: assignment withdrawn')
     continue
    poolid = get(leaderip,'ActPool/'+pool)[0]
    if poolid == '_1':
@@ -232,6 +255,7 @@ def zpooltoimport(*args):
    # poolnxt/<pool> is the only trigger of this import: it is deleted only after the import worked (below).  It used to be deleted here,
    # before the import, so one failed first try (the disk session of the survivor was not up yet after a take over) orphaned the pool for ever.
    print(cmdline)
+   decision(pool, 'importing: '+cmdline)
    put(leaderip, 'pools/'+pool,myhost)
    res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
    result = res.stdout.decode('utf-8')
@@ -240,6 +264,8 @@ def zpooltoimport(*args):
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    print('result',result)
    if pool in result and poolonline(pool):
+    decision(pool, 'imported')
+    lastdecision.pop(pool, None)
     dels(leaderip, 'poolnxt', pool )      # imported: the assignment is done
     # The pool is imported by its id (ActPool/<pool>), and a new id is given right after the import, so the next import
     # (by the id every node knows) finds only the devices that took part in THIS import: a disk that was away meanwhile
@@ -289,6 +315,7 @@ def zpooltoimport(*args):
     #cmdline= 'systemctl restart zfs-zed  '
     #result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    else:
+    decision(pool, 'import failed (rc '+str(res.returncode)+'), retried in the next round')
     dels(leaderip, 'pools/',pool)         # not imported (yet): poolnxt stays, the next round (9 s) tries again
         
     
@@ -333,6 +360,7 @@ def zpooltoimport(*args):
         if poolnxt == nxthost:
             continue 
         print('adding')
+        decision('leader:'+pool, 'poolnxt '+str(poolnxt)+' -> '+str(nxthost)+' (ready: '+' '.join(sorted(str(h[0]).split('/')[-1] for h in readies if isinstance(h,(list,tuple))))+')')
         #dels(leaderip,'poolnxt/'+pool)
         put(leaderip,'poolnxt/'+pool,nxthost)
         print('sync poolnxt Add',nxthost,pool)
