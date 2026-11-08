@@ -142,14 +142,47 @@ def memberimportdir(pool, disks):
   return ''
  return impdir
 
-lastdecision = {}
+DECISIONF = '/root/zpooltoimport.last'
+def lastdecisions():
+ # r10d (validator 10c D5): the last decision per pool is kept in a file, one 'pool<TAB>why' line each: the looper
+ # (zpooltoimportlooper.sh) starts this script as a NEW process every 9 s, so a module dict de-duplicated nothing and a
+ # lasting skip was logged again every round.  zfsping.py runs it in its own process too: both share the file.
+ d = {}
+ try:
+  with open(DECISIONF) as f:
+   for line in f:
+    k, _, v = line.rstrip('\n').partition('\t')
+    if k:
+     d[k] = v
+ except Exception:
+  pass
+ return d
+
+def savedecisions(d):
+ try:
+  tmp = DECISIONF+'.'+str(os.getpid())
+  with open(tmp, 'w') as f:
+   for k, v in d.items():
+    f.write(k+'\t'+v+'\n')
+  os.replace(tmp, DECISIONF)
+ except Exception:
+  pass
+
+def forgetdecision(pool):
+ d = lastdecisions()
+ if d.pop(pool, None) is not None:
+  savedecisions(d)
+
 def decision(pool, why):
  # QSD5.352 r10c (QC proof T1): a pool assigned here (poolnxt) was not imported for 312 s once (z1) and within 15 s the
  # next time (z2), and nothing said why.  Every assigned pool's decision is logged with a time stamp to
  # /root/zpooltoimport.log when it changes (this runs every 9 s), so the next run shows which test skipped it.
- if lastdecision.get(pool) == why:
+ why = why.replace('\t', ' ').replace('\n', ' ')
+ d = lastdecisions()
+ if d.get(pool) == why:
   return
- lastdecision[pool] = why
+ d[pool] = why
+ savedecisions(d)
  try:
   if os.path.exists('/root/zpooltoimport.log') and os.path.getsize('/root/zpooltoimport.log') > 5000000:
    os.replace('/root/zpooltoimport.log', '/root/zpooltoimport.log.1')
@@ -265,7 +298,7 @@ def zpooltoimport(*args):
    print('result',result)
    if pool in result and poolonline(pool):
     decision(pool, 'imported')
-    lastdecision.pop(pool, None)
+    forgetdecision(pool)
     dels(leaderip, 'poolnxt', pool )      # imported: the assignment is done
     # The pool is imported by its id (ActPool/<pool>), and a new id is given right after the import, so the next import
     # (by the id every node knows) finds only the devices that took part in THIS import: a disk that was away meanwhile

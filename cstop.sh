@@ -56,9 +56,26 @@ done
 # QSD5.352 r10c (QC proof E-1): stop this node's etcd cleanly as the last step.  The outer container stop used to kill it
 # (SIGKILL with the nested dockerd), which can leave a torn WAL tail that the next start has to repair; a node that came
 # back from a stop then waited for ever for an etcd that had exited at start.  The pools come first: only after them.
+# r10d (validator 10c D1): 'docker stop' never reached etcd.  In quickstor:etcd PID 1 is dash running /runme.sh and etcd is
+# its child; dash as PID 1 ignores SIGTERM, so 'docker stop -t 15' waited 15 s and then SIGKILLed both (exit code 137),
+# and the old 'stopped cleanly' line was written anyway.  The TERM now goes to etcd itself; etcd shuts down and re-raises
+# it, dash ends with etcd: exit code 143 = clean, 137 = killed.  If etcd has not ended after 20 s, docker stop as before.
 if docker ps -q -f name=^etcd$ 2>/dev/null | grep -q .
 then
-	timeout 25 docker stop -t 15 etcd >> /root/cstop.log 2>&1 && log "etcd stopped cleanly" || log "etcd stop failed or timed out"
+	t0=`date +%s`
+	timeout 10 docker exec etcd pkill -TERM -x etcd >> /root/cstop.log 2>&1
+	rc=`timeout 20 docker wait etcd 2>/dev/null`
+	if [ -z "$rc" ]
+	then
+		timeout 25 docker stop -t 5 etcd >> /root/cstop.log 2>&1
+		rc=`docker inspect -f '{{.State.ExitCode}}' etcd 2>/dev/null`
+		log "etcd did not end within 20 s of its TERM: docker stop, exit code ${rc:-?}"
+	else
+		case "$rc" in
+			143|0) log "etcd stopped cleanly (exit code $rc, $((`date +%s`-t0)) s)" ;;
+			*)     log "etcd stopped with exit code $rc ($((`date +%s`-t0)) s; 137 = killed)" ;;
+		esac
+	fi
 fi
 log "done"
 exit 0
