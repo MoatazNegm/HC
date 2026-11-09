@@ -109,6 +109,20 @@ def poolonline(pool):
   return False
 
 
+def importedhere(pool):
+ # r10f (D12): the pool is imported AND owned by this node.  Container flavour: one kernel, so 'imported' alone says
+ # nothing; the owner property (cpoolowner.sh) must name this node exactly (an unknown owner '' / '-' is not enough: a
+ # pool left imported by a node that died is taken over through the import below).  Physical: imported here.
+ if not poolonline(pool):
+  return False
+ if os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10'):
+  try:
+   res = subprocess.run(['/pace/cpoolowner.sh','of',pool],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=30)
+   return res.stdout.decode('utf-8','replace').strip() == myhost
+  except Exception:
+   return False
+ return True
+
 def poolishere(pool):
  # container flavour: one kernel, the owner is written on the pool; physical: the pool is imported here or it is not
  if os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10'):
@@ -151,8 +165,10 @@ def lastdecisions():
  try:
   with open(DECISIONF) as f:
    for line in f:
-    k, _, v = line.rstrip('\n').partition('\t')
-    if k:
+    k, tab, v = line.rstrip('\n').partition('\t')
+    # r10f (QC proof 10e D11): only 'pool<TAB>why' lines are decisions; a line without a tab (a torn or foreign line)
+    # was kept as a pool named after the whole line and written back by every later save
+    if k and tab:
      d[k] = v
  except Exception:
   pass
@@ -191,7 +207,42 @@ def decision(pool, why):
  except Exception:
   pass
 
+LOCKF = '/run/zpooltoimport.lock'
+def importlock():
+ # r10f (QC proof 10e D12): one import pass at a time on a node.  The looper (zpooltoimportlooper.sh, a new process every 9 s)
+ # and zfsping.py's refreshall() on a leader change both run this pass; a second pass that read the assignment while the
+ # first one was importing (an import of a taken-over pool took 58 s) imported the same pool again 1 s after the first
+ # finished ('importing' / 'imported' twice, a second reguid and a second pools sync).  A pass that finds the lock taken
+ # does nothing (the next round, 9 s later, sees the result of the first).  Unknown lock problems never stop the import.
+ try:
+  import fcntl
+  f = open(LOCKF, 'a')
+ except Exception:
+  return 'nolock'
+ try:
+  fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+  return f
+ except (BlockingIOError, PermissionError):
+  f.close()
+  return None
+ except Exception:
+  f.close()
+  return 'nolock'
+
 def zpooltoimport(*args):
+ if args and args[0] == 'init':
+  return _zpooltoimport(*args)
+ lock = importlock()
+ if lock is None:
+  print('another import pass runs on this node, this one is skipped')
+  return
+ try:
+  return _zpooltoimport(*args)
+ finally:
+  if lock != 'nolock':
+   lock.close()
+
+def _zpooltoimport(*args):
  global leader, leaderip, myhost, myhostip, etcdip
  if args[0]=='init':
      leader = args[1]
@@ -275,6 +326,14 @@ def zpooltoimport(*args):
    if str(get(leaderip,'poolnxt/'+pool)[0]) != myhost:
     print('assignment of', pool, 'withdrawn, not imported')
     decision(pool, 'skipped: assignment withdrawn')
+    continue
+   # r10f (D12): the pool list of this pass may be older than an import that ended meanwhile (in another process before
+   # this pass took the lock): a pool that is ONLINE here with this node as its owner is not imported a second time
+   if importedhere(pool):
+    print('pool is already imported by this node, not imported again', pool)
+    decision(pool, 'skipped: already imported by this node')
+    forgetdecision(pool)
+    dels(leaderip, 'poolnxt', pool)
     continue
    poolid = get(leaderip,'ActPool/'+pool)[0]
    if poolid == '_1':

@@ -402,6 +402,94 @@ def solvestriperaids(striperaids,freedisks,allraids):
   usedfree.append(ret)
  return
  
+# QSD5.352 r10f (QC proof 10e D17): a mirror leg on another node's disk goes REMOVED (or UNAVAIL) when that node stops, and
+# it stayed so after the node came back: the pool stays imported on the surviving owner the whole time, nothing reopens the
+# leg (no zed / udev event reaches the node container), and the stand-in path below needs a device-mapper placeholder,
+# which the container cannot make ("zpool replace ... /dev/": the placeholder name was empty, every pass).  Four
+# stop/return cycles of zfs2 left pdhcp2401216152 DEGRADED.  Container flavour: when the leg's own disk is back (the
+# by-id link exists and its SCSI device state is 'running', read from sysfs: the device itself is not opened here) the
+# owner puts it back with 'zpool online' (ZFS resilvers what changed meanwhile).  At most one try per leg every 2 min;
+# every try is logged in /root/reonline.log.  The physical flavour keeps its path (zed, the stand-in, the optimizer).
+import re
+LEGDEAD = ('REMOVED', 'UNAVAIL', 'FAULT')
+REONLINELOG = '/root/reonline.log'
+REONLINELAST = '/root/reonline.last'
+REONLINEWAIT = 120
+BYID = '/dev/disk/by-id/'
+SYSBLOCK = '/sys/block/'
+
+def reonlinelog(msg):
+ try:
+  from datetime import datetime
+  with open(REONLINELOG, 'a') as f:
+   f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+str(myhost)+' '+msg+'\n')
+ except Exception:
+  pass
+
+def iscontainer():
+ return os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')
+
+def devicerunning(name):
+ path = BYID+name
+ if not os.path.exists(path):
+  return False
+ dev = os.path.basename(os.path.realpath(path))
+ base = re.sub(r'[0-9]+$', '', dev) if dev.startswith('sd') else dev
+ try:
+  with open(SYSBLOCK+base+'/device/state') as f:
+   return f.read().strip() == 'running'
+ except OSError:
+  return False
+
+def legstate(pool, name):
+ try:
+  out = subprocess.run(['timeout','30','/sbin/zpool','status',pool],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode('utf-8','replace')
+ except Exception:
+  return ''
+ for line in out.split('\n'):
+  w = line.split()
+  if len(w) >= 2 and w[0] == name:
+   return w[1]
+ return ''
+
+def reonlineleg(raid, disk):
+ # True when the leg is in use again (online, resilvering): nothing else to do for it in this pass
+ if not iscontainer():
+  return False
+ name = str(disk.get('name',''))
+ status = str(disk.get('status',''))
+ if 'scsi' not in name or not any(x in status for x in LEGDEAD):
+  return False
+ if str(disk.get('host','_1')) in ('_1', 'UNAVAIL', '', 'None'):
+  return False            # lsscsi does not list the disk: its node is not back
+ if not devicerunning(name):
+  return False
+ last = {}
+ try:
+  with open(REONLINELAST) as f:
+   for line in f:
+    k, tab, v = line.strip().partition(' ')
+    if tab:
+     last[k] = float(v)
+ except Exception:
+  pass
+ key = str(raid.get('pool',''))+'/'+name
+ if stamp() - last.get(key, 0) < REONLINEWAIT:
+  return False
+ last[key] = stamp()
+ try:
+  with open(REONLINELAST, 'w') as f:
+   for k, v in last.items():
+    f.write(k+' '+str(v)+'\n')
+ except Exception:
+  pass
+ res = subprocess.run(['timeout','60','/sbin/zpool','online',raid['pool'],name],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ now = legstate(raid['pool'], name)
+ ok = res.returncode == 0 and now != '' and not any(x in now for x in LEGDEAD)
+ reonlinelog(raid['pool']+' leg '+name+' was '+status+', its disk is back (host '+str(disk.get('host'))+'): zpool online rc '+str(res.returncode)
+             +', now '+(now or '?')+('' if ok else ' -- not in use, retried in '+str(REONLINEWAIT)+' s: '+res.stderr.decode('utf-8','replace').strip()[:200]))
+ return ok
+
 def solvedegradedraid(raid,diskname):
  global leader, leaderip, myhost, myhostip, etcdip
  if 'dm-' in str(diskname):
@@ -436,6 +524,11 @@ def solvedegradedraid(raid,diskname):
  if dmstup == '0':
     cmddm= ['/pace/mkdm.sh']
     dmstup = subprocess.run(cmddm,stdout=subprocess.PIPE).stdout.decode().split('result_')[1]
+ # r10f (D17): no placeholder could be made (the container flavour has no device-mapper target): 'zpool replace ... /dev/'
+ # only failed every pass ("must be a block device"); the leg is left for reonlineleg() when its disk comes back
+ if not str(dmstup).strip():
+    print('no stand-in placeholder for the lost disk, mirror left degraded until its disk is back', raid['pool'], diskname)
+    return
  diskuid = diskname
  if 'scsi' in diskname:
     # the node image of the container flavour has no zdb: then the guid of the faulty disk is not looked up and the
@@ -626,6 +719,8 @@ def spare2(*args):
                     disk['host'] = myhost
                     continue
                 alloptimized = 'no'
+                if reonlineleg(allinfo['raids'][raid], disk):
+                    continue       # r10f (D17): the leg's own disk is back and in use again
                 solvedegradedraid(allinfo['raids'][raid],disk['name'])
  if myhost != leader:
     return 

@@ -57,6 +57,16 @@ def signal_reboot_via_etcd(etcd_endpoint, myhost, reason):
     except Exception as exc:
         print(f"[checksyncs] WARNING: failed to write {key}={reason} to {etcd_endpoint}: {exc}")
 
+SYNCLOG = '/root/syncall.log'
+def synclog(msg):
+ # r10f (F591): the full copy runs in the background with its output thrown away (docker_setup); what failed is kept here
+ try:
+  from datetime import datetime
+  with open(SYNCLOG, 'a') as f:
+   f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+msg+'\n')
+ except Exception:
+  pass
+
 software = 'na'
 def reqorder(item):
  """Order of a pending sync request = the time it was filed, in integer nanoseconds.
@@ -158,7 +168,14 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
     if sync in ['tz','ntp','gw','dns']: 
      cmdline='/TopStor/HostManualconfig'+sync.upper()+" "+" ".join([leader, leaderip, myhost, myhostip]) 
      print('cmd',cmdline)
-     result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+     # r10f (QC proof 10e F591, hardening): as in syncrequest: a script that ends non-zero (the last command of these
+     # scripts decides: nmcli, route, timedatectl ...) raised CalledProcessError and ended the whole full copy (syncall)
+     # of a node whose etcd was started empty: the kinds after it (priv, tz, user ...) were never copied, and the leader
+     # keeps this node's old done marks, so no later pass copies them.  The failure is logged, the copy goes on.
+     try:
+      result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+     except subprocess.CalledProcessError as e:
+      synclog('HostManualconfig'+sync.upper()+' ended with exit '+str(e.returncode)+' (initial sync goes on): '+e.output.decode('utf-8','replace')[-300:].replace('\n',' | '))
     if sync == 'priv':
         user=syncleft.split('/')[2]
         synckeys(leaderip, myhostip, 'usersinfo/'+user, 'usersinfo/'+user)
@@ -208,8 +225,20 @@ def syncall(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
 
  allinitials = get(leaderip,'sync','initial')
  myinitials = [ x for x in allinitials if 'initial' in str(x)  and '/request/dhcp' not in str(x) ] 
+ # r10f (QC proof 10e F591): the full copy of a node whose etcd was started empty missed usersinfo (0 of 4) and a group.
+ # The cause was TopStor/refreshdisown.sh killing this process half way (its job 'checksyncs'); it is spared there now.
+ # Hardening here: one initial that fails (an exception, or synckeys() ending the process on a failed read) no longer
+ # ends the copy; start, failures and the end are logged in /root/syncall.log (a start without a 'done' line = killed).
+ # The done mark of a failed kind is not written, as before.
+ synclog('syncall of '+str(myhost)+' from '+str(leaderip)+': '+str(len(myinitials))+' initial kinds')
+ failed = []
  for syncinfo in myinitials:
-   doinitsync(leader,leaderip,myhost,myhostip, syncinfo,pullsync)
+   try:
+    doinitsync(leader,leaderip,myhost,myhostip, syncinfo,pullsync)
+   except (Exception, SystemExit) as e:
+    failed.append(str(syncinfo[0]))
+    synclog('initial '+str(syncinfo[0])+' failed, the next kind goes on: '+type(e).__name__+' '+str(e)[:200])
+ synclog('syncall done, '+str(len(myinitials)-len(failed))+' kinds copied'+(', failed: '+' '.join(failed) if failed else ''))
 
  for done in otherrequests:
       put(leaderip,done[0]+'/'+myhost,done[1])
