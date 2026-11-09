@@ -411,7 +411,11 @@ def solvestriperaids(striperaids,freedisks,allraids):
 # owner puts it back with 'zpool online' (ZFS resilvers what changed meanwhile).  At most one try per leg every 2 min;
 # every try is logged in /root/reonline.log.  The physical flavour keeps its path (zed, the stand-in, the optimizer).
 import re
-LEGDEAD = ('REMOVED', 'UNAVAIL', 'FAULT')
+# r10g (validator 10f V7): only a leg whose disk was really gone (REMOVED / UNAVAIL) is put back.  A FAULTED leg (real I/O
+# errors on a disk that stays listed and 'running') is left to the operator: an online every 2 min made a failing disk
+# flap in and out of the mirror.  After the online, FAULTED still counts as 'not in use'.
+LEGDEAD = ('REMOVED', 'UNAVAIL')
+LEGNOTINUSE = ('REMOVED', 'UNAVAIL', 'FAULT', 'OFFLINE')
 REONLINELOG = '/root/reonline.log'
 REONLINELAST = '/root/reonline.last'
 REONLINEWAIT = 120
@@ -485,7 +489,7 @@ def reonlineleg(raid, disk):
   pass
  res = subprocess.run(['timeout','60','/sbin/zpool','online',raid['pool'],name],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  now = legstate(raid['pool'], name)
- ok = res.returncode == 0 and now != '' and not any(x in now for x in LEGDEAD)
+ ok = res.returncode == 0 and now != '' and not any(x in now for x in LEGNOTINUSE)
  reonlinelog(raid['pool']+' leg '+name+' was '+status+', its disk is back (host '+str(disk.get('host'))+'): zpool online rc '+str(res.returncode)
              +', now '+(now or '?')+('' if ok else ' -- not in use, retried in '+str(REONLINEWAIT)+' s: '+res.stderr.decode('utf-8','replace').strip()[:200]))
  return ok
