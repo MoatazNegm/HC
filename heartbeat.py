@@ -11,6 +11,10 @@ leader, leaderip, myhost, myhostip, nextleader, nextleaderip = '','','','','',''
 etcd = ''
 dev = 'enp0s8'
 os.environ['ETCDCTL_API']= '3'
+# every nmap is bounded twice: nmap's own --host-timeout and a subprocess timeout (nmap 7.92 can poll for ever after the
+# interface it scans on is removed, e.g. the bond0 rebuild of docker_setup.sh or any 'nmcli conn down/up cmynode')
+NMAP = 'nmap --max-rtt-timeout 500ms --host-timeout 5s -n -p '
+NMAPTIMEOUT = 15
 
 
 def dosync(*args):
@@ -102,6 +106,8 @@ def hostlost(host, hostip):
                         put(myhostip,'leader',leader)
                     if myhost == nextleader:
                         cmdline='/pace/leaderlost.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+nextleader+' '+nextleaderip+' '+clusterip+' '+host
+                        # no timeout on purpose: the take over (docker_primary.sh: pool import, cluster ip, containers)
+                        # must not be killed halfway; a half-done take over is worse than a late one
                         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
                         etcd = leaderip
                         dels(leaderip, 'sync/hostdown/'+host,'--prefix')
@@ -120,8 +126,11 @@ def hostlost(host, hostip):
                             break
                         sleep(1)
                         print('chceking new leader')
-                        cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+leaderip 
-                        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+                        cmdline=NMAP+port+' '+leaderip
+                        try:
+                            result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPTIMEOUT).decode('utf-8')
+                        except Exception:
+                            result=''
                         if ('Host is up' or 'open' ) in result:
                             result = (host,'ok')
                         else:
@@ -133,7 +142,12 @@ def hostlost(host, hostip):
                         nodeevent('Partst02', 'warning', host)
                 dels(etcd, 'cpuperf/'+host)
                 cmdline='/pace/hostlost.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+host
-                result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+                try:
+                        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=300).decode('utf-8')
+                except subprocess.TimeoutExpired:
+                        # a hung hostlost.sh must not freeze failure detection; the membership clean-up below still runs
+                        with open('/root/heartproblem','a') as f:
+                                f.write('\nhostlost.sh timed out after 300s for '+host+'\n')
                 dels(etcd,'ready/',host)
                 dels(etcd, 'running/', host)
                 dels(etcd, 'host', host)
@@ -143,14 +157,15 @@ def hostlost(host, hostip):
 
 def heartbeat(*args):
     global etcd, leader ,leaderip, myhost, myhostip
+    # start-up reads: a hung docker exec raises TimeoutExpired, heartbeat.py exits and heartbeatlooper.sh starts it again
     cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leader'
-    leader=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
+    leader=subprocess.run(cmdline.split(),stdout=subprocess.PIPE,timeout=30).stdout.decode('utf-8').replace('\n','').replace(' ','')
     cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leaderip'
-    leaderip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
+    leaderip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE,timeout=30).stdout.decode('utf-8').replace('\n','').replace(' ','')
     cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py clusternode'
-    myhost=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
+    myhost=subprocess.run(cmdline.split(),stdout=subprocess.PIPE,timeout=30).stdout.decode('utf-8').replace('\n','').replace(' ','')
     cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip'
-    myhostip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').replace('\n','').replace(' ','')
+    myhostip=subprocess.run(cmdline.split(),stdout=subprocess.PIPE,timeout=30).stdout.decode('utf-8').replace('\n','').replace(' ','')
     nochange = 1
     knownsn =  0
     port = myport = '2379'
@@ -191,10 +206,11 @@ def heartbeat(*args):
             while tries < 2:
                 tries +=1
                 try:
-                    cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+hostip 
-                    res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                except:
-                    result=(host,'doubt')
+                    cmdline=NMAP+port+' '+hostip
+                    res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPTIMEOUT).decode('utf-8')
+                except Exception:
+                    # failed or timed out nmap (the child is killed): no answer, go to the ping check below
+                    res=''
                 if ('Host is up' or 'open' ) in res:
                     result = (host,'ok')
                 else:
@@ -204,13 +220,18 @@ def heartbeat(*args):
                     cmdline='ping -w 1 '+hostip 
                     print(cmdline)
                     try:
-                        subprocess.check_output(cmdline.split())
-                    except subprocess.CalledProcessError as e:
+                        subprocess.check_output(cmdline.split(),timeout=5)
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                         result=(host,'lost')
                 if 'ok' in str(result):
                     break
                 sleep(1)
             print(result)
+            if result[1] == 'doubt':
+                # nmap gave no answer but ping did (in the last try): the host is alive, do not declare it lost
+                # (a local nmap problem must never start a take over of a live leader); it is checked again next loop
+                print('nmap doubt but ping answers', host, hostip)
+                continue
             if 'ok' not in str(result):
                 with open('/root/heartproblem','a') as f:
                         f.write('OK:\n'+host+' '+res)
