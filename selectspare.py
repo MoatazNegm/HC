@@ -520,23 +520,31 @@ SCSIRE = re.compile(r'scsi-[0-9A-Za-z]+')
 SDRE = re.compile(r'\b(sd[a-z]+)[0-9]*\b')
 
 def zout(args, t=60):
+ # r10h pass 2 (validator G5): None when the command failed or timed out, so the caller does not take a failed read for
+ # "no pool names this disk" (fail-open).  'zpool import' with nothing to import ends rc 1 with "no pools available":
+ # that is an answer (empty), not a failure.
  try:
-  return subprocess.run(['timeout', str(t)]+args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode('utf-8', 'replace')
+  r = subprocess.run(['timeout', str(t)]+args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
  except Exception:
-  return ''
+  return None
+ out = (r.stdout or b'').decode('utf-8', 'replace')
+ err = (r.stderr or b'').decode('utf-8', 'replace')
+ if r.returncode == 0 or (out.strip() == '' and 'no pools available' in err):
+  return out
+ return None
 
 def poolsections(text):
- # {pool: its part of a 'zpool status' / 'zpool import' listing}
- secs = {}
- name = None
- for line in text.split('\n'):
+ # [(pool, its part of a 'zpool status' / 'zpool import' listing)], in listing order.  r10h pass 2 (validator G2): a list,
+ # not a dict by name -- 'zpool import' can list two pools of the SAME name (the proof's lost P1: a DEGRADED copy and an
+ # ONLINE one); keyed by name the second section replaced the first and the legs of the first were not reserved.
+ secs = []
+ for line in (text or '').split('\n'):
   w = line.split()
   if len(w) >= 2 and w[0] == 'pool:':
-   name = w[1]
-   secs[name] = ''
-  elif name is not None:
-   secs[name] += line+'\n'
- return secs
+   secs.append([w[1], ''])
+  elif secs:
+   secs[-1][1] += line+'\n'
+ return [tuple(x) for x in secs]
 
 def namedin(disk, text):
  ids = set(m.group(0) for m in SCSIRE.finditer(text))
@@ -549,7 +557,7 @@ def pendingpools(allinfo):
   for row in get(leaderip, pfx, '--prefix'):
    if isinstance(row, (list, tuple)) and len(row) > 1 and str(row[0]).startswith(pfx):
     known.add(str(row[0])[len(pfx):])
- imported = set(zout(['/sbin/zpool', 'list', '-H', '-o', 'name'], 30).split()) | set(allinfo.get('pools', {}).keys())
+ imported = set((zout(['/sbin/zpool', 'list', '-H', '-o', 'name'], 30) or '').split()) | set(allinfo.get('pools', {}).keys())
  return set(p for p in known if p and p not in imported)
 
 def quarantined(now):
@@ -565,9 +573,15 @@ def quarantined(now):
    res[str(row[0])[len(QUARANTINEKEY):]] = str(row[1])
  return res
 
+SPAREGRACEFRESH = 900     # r10h pass 2 (G3): first-seen stamps older than this (file not written by a leader pass) are dropped
 def gracewait(freenames, now):
  first = {}
  try:
+  # r10h pass 2 (validator G3): only a leader pass writes this file.  A node that led before kept its old stamps, and when it
+  # took the lead again a disk free in its old term got no grace.  A file not written for SPAREGRACEFRESH s is from an
+  # earlier term (or the passes stopped): its stamps are dropped and every free disk starts its grace again.
+  if now - os.path.getmtime(SPAREGRACEF) > SPAREGRACEFRESH:
+   raise ValueError('stale')
   with open(SPAREGRACEF) as f:
    for line in f:
     k, sp, v = line.strip().partition(' ')
@@ -586,29 +600,46 @@ def gracewait(freenames, now):
   pass
  return dict((n, int(now-keep[n])) for n in freenames if now - keep[n] < SPAREGRACE)
 
-def sparereserved(allinfo, disks, grace=True):
- # disks: {name: disk dict} of free disks; returns {name: reason} of those that must not be used now
+def sparereserved(allinfo, disks, grace=True, log=True):
+ # disks: {name: disk dict} of free disks; returns {name: reason} of those that must not be used now.
+ # log: write /root/sparereserve.now and the 'reserved now:' line.  r10h pass 2 (validator G4): the owner's one-disk check
+ # passes log=False, so .now always holds the full set of the leader pass.
  if not iscontainer():
   return {}
  now = stamp()
  if not disks:
   if grace:
    gracewait([], now)       # no free disk now: a disk free again later starts a new grace
+  if log:
+   reservelog({})           # G4: .now says 'none' instead of keeping a stale set
   return {}
  why = {}
- status = poolsections(zout(['/sbin/zpool', 'status'], 60))
+ statustext = zout(['/sbin/zpool', 'status'], 60)
+ if statustext is None:
+  # r10h pass 2 (validator G5): fail closed -- without a 'zpool status' answer no free disk is known to be really free
+  for name in disks:
+   why[name] = 'unknown: zpool status gave no answer'
+  if log:
+   reservelog(why)
+  return why
+ status = poolsections(statustext)
  for name, d in disks.items():
-  for pool, sec in status.items():
+  for pool, sec in status:
    if namedin(d, sec):
     why[name] = 'inpool '+pool
     break
  pending = pendingpools(allinfo)
  if pending:
-  scan = poolsections(zout(['/sbin/zpool', 'import'], 90))
+  scantext = zout(['/sbin/zpool', 'import'], 90)
+  if scantext is None:
+   # G5: a pool this cluster expects is not imported and its member disks could not be listed: hold every free disk
+   for name in disks:
+    if name not in why:
+     why[name] = 'unknown: zpool import gave no answer (pending '+','.join(sorted(pending))+')'
   for name, d in disks.items():
    if name in why:
     continue
-   for pool, sec in scan.items():
+   for pool, sec in poolsections(scantext):
     if pool in pending and namedin(d, sec):
      why[name] = 'pending '+pool
      break
@@ -620,11 +651,12 @@ def sparereserved(allinfo, disks, grace=True):
   for name, age in gracewait(list(disks.keys()), now).items():
    if name not in why:
     why[name] = 'grace free for '+str(age)+' s < '+str(SPAREGRACE)+' s'
- reservelog(why)
+ if log:
+  reservelog(why)
  return why
 
 def reservelog(why):
- kinds = '\n'.join(sorted(k+' '+v.split(' free for ')[0] for k, v in why.items()))
+ kinds = '\n'.join(sorted(k+' '+v.split(' free for ')[0] for k, v in why.items())) or 'none'
  try:
   old = open(SPARERESERVENOW).read()
  except Exception:
@@ -655,12 +687,27 @@ def quarantineleg(pool, name, state):
  put(leaderip, QUARANTINEKEY+name, str(stamp())+'/'+str(pool)+'/'+str(state))
  reonlinelog_to(SPARERESERVELOG, 'quarantine '+name+': replaced out of '+str(pool)+' as '+str(state)+' (free again after '+str(SPAREQUARANTINE)+' s or when the key '+QUARANTINEKEY+name+' is deleted)')
 
+BADHEALTH = ('DEGRADED', 'FAULTED', 'UNAVAIL', 'REMOVED', 'OFFLINE', 'SUSPENDED')
+DATARAIDS = ('mirror', 'raidz', 'draid')
 def degradedpools(allinfo):
+ # r10h (finding 7): the pools that are not healthy; while one is, healthy raids are not re-balanced.
+ # r10h pass 2 (validator G1): judged by the pool's own health (the pool line of 'zpool status', putzpool 'status') and by
+ # the real status of its data raids (mirror-N / raidz* / draid*) only.  putzpool gives every log / cache / spare raid and a
+ # stripe the status 'NA', and in an Availability pool a stripe or a 'mirror-temp' raid 'DEGRADED' for good: taken as a
+ # sign, any pool with a cache, log, spare or stripe counted as degraded for ever and every re-balance was held.
  res = set()
+ for pname, pool in allinfo.get('pools', {}).items():
+  if 'ree' in str(pname) or not isinstance(pool, dict):
+   continue
+  if any(b in str(pool.get('status', '')) for b in BADHEALTH):
+   res.add(str(pname))
  for rname, raid in allinfo.get('raids', {}).items():
   if 'free' in str(raid.get('name', '')) or raid.get('pool') in ('pree', None):
    continue
-  if 'ONLINE' not in str(raid.get('status', '')):
+  n = str(raid.get('name', rname))
+  if not n.startswith(DATARAIDS) or n.startswith('mirror-temp'):
+   continue
+  if any(b in str(raid.get('status', '')) for b in BADHEALTH):
    res.add(str(raid.get('pool')))
  return res
 
@@ -829,7 +876,7 @@ def spare2(*args):
       # r10h (finding 7): the request was made by the leader some seconds ago; a disk that is reserved NOW (a member of a
       # pool waiting to import, of an imported pool, or quarantined) is not replaced in: 'zpool replace -f' would override
       # ZFS's own "part of exported pool" refusal.  The request is dropped; the leader's next pass decides again.
-      held = sparereserved(allinfo, {adiskname: allinfo['disks'].get(adiskname, {'name': adiskname})}, grace=False)
+      held = sparereserved(allinfo, {adiskname: allinfo['disks'].get(adiskname, {'name': adiskname})}, grace=False, log=False)
       if adiskname in held:
          reonlinelog_to(SPARERESERVELOG, 'replace request '+poolname+' '+rmorig+' -> '+adiskname+' dropped: '+held[adiskname])
          dels(leaderip,'ask/needtoreplace',adiskname)
