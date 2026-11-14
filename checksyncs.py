@@ -116,7 +116,7 @@ def insync(leaderip, leader):
                 print("some nodes didn't sync completely")
                 isinsync = 0 
                 break
-    if isinsync == 1:
+    if isinsync == 1 and iscontainer():
         stale = poolidsdiffer(leaderip, leader)      # r10h (finding 5): a node with old pool ids is not in sync
         if stale:
             print('pool ids (ActPool) differ on', stale)
@@ -444,7 +444,7 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
     etcdip = myhostip
     # r10h (finding 8): a follower pass writes into this node's own etcd; when it does not answer at myhostip (this node
     # leads, so its etcd is published on the cluster address only, or it is down) every put of the pass fails silently
-    if 'pullsync' not in pullsync and prefixread(myhostip, 'leader', 5) is None:
+    if iscontainer() and 'pullsync' not in pullsync and prefixread(myhostip, 'leader', 5) is None:
         synclog('syncrequest of '+str(myhost)+': follower pass but the etcd at '+str(myhostip)+' does not answer (leader read: '+str(leader)+'), pass skipped')
         return
     if 'pullsync' not in pullsync:
@@ -475,7 +475,7 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
   flag = 1
   # r10h (finding 8): a long pass re-reads the leader every LEADERRECHECK s and stops when it changed (the branch taken
   # at the start -- leader or follower -- is wrong from then on); the next pass starts 2 s later with the new name
-  if 'pullsync' not in pullsync and timestamp() - lastcheck > LEADERRECHECK:
+  if iscontainer() and 'pullsync' not in pullsync and timestamp() - lastcheck > LEADERRECHECK:
    lastcheck = timestamp()
    now = leaderread(leaderip, 1, 0)
    if now is not None and now != leader:
@@ -765,6 +765,11 @@ def tombstonesonreturn(leaderip, myhostip):
             print('tombstone kept (only here)', key)
 
 POOLIDLOG = '/root/poolidsync.log'
+def iscontainer():
+    # r10h pass 2 (validator G8): the r10h changes of this file (findings 5 and 8) are for the container flavour only; the
+    # physical path stays as it was (CLAUDE.md hard rule 1).  The same test as flavor.sh.
+    return os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')
+
 POOLIDKINDS = ('ActPool/',)
 def prefixread(ip, pfx, timeout=10):
     # r10h: {key: value} of a prefix, or None when the etcd at <ip> did not answer (etcdget returns [] for both)
@@ -798,12 +803,16 @@ def poolidsfollow(leaderip, myhostip):
     # and at the end of every follower syncrequest pass: keys that differ are copied, keys the leader no longer has are
     # removed; nothing is changed when either etcd does not answer.  Every change is logged in /root/poolidsync.log.
     changed = 0
-    if not myhostip or myhostip == leaderip:
+    if not iscontainer() or not myhostip or myhostip == leaderip:
         return 0
     for pfx in POOLIDKINDS:
         lead = prefixread(leaderip, pfx)
         mine = prefixread(myhostip, pfx)
         if lead is None or mine is None:
+            continue
+        if not lead:
+            # r10h pass 2 (validator G7): the leader's etcd answers but has no pool id at all (a fresh, rebuilt or just
+            # promoted etcd without the keys): this node's copy may be the only right one, nothing is removed
             continue
         for k, v in lead.items():
             if mine.get(k) != v:
@@ -821,6 +830,8 @@ def poolidsfollow(leaderip, myhostip):
 def poolidsdiffer(leaderip, leader):
     # r10h (finding 5): the leader's insync() also compares every ready follower's pool ids with its own; a follower that
     # does not answer is not counted (its ready key goes when it is lost)
+    if not iscontainer():
+        return []
     lead = prefixread(leaderip, 'ActPool/')
     if lead is None:
         return []
@@ -840,22 +851,29 @@ BADVAL = ('_1', '-1', '', 'None')
 LEADERTRIES = 20
 LEADERWAIT = 3
 LEADERRECHECK = 60
-def leaderread(leaderip, tries=None, wait=None):
+LEADERBUDGET = 60
+def leaderread(leaderip, tries=None, wait=None, budget=None):
     # QSD5.352 r10h (QC proof 10g finding 8): the leader's name was read ONCE at the start of a pass.  Read in the moment a
     # node returned, it came back '_1' (no answer) on the leader itself, so the pass took the FOLLOWER branch with
     # myhostip = the node's own address (.201), where this node's etcd is not published while it leads (.200 only): every
     # put failed silently (2 s each) while the pass crawled through ~60 initial kinds, no leader pass pruned the acked
     # requests, and isinsync stayed 'no' for ~13 min (seen twice).  Now the name is read until it is a real value (up to
     # LEADERTRIES x LEADERWAIT s); without one the pass does nothing (the looper starts the next one 2 s later).
+    # r10h pass 2 (validator G9): the time is bounded by a monotonic deadline of LEADERBUDGET s (each read is an etcdctl
+    # call with its own dial / command timeout of 2-5 s against an address without etcd: 20 tries were ~100-160 s, not
+    # the 60 s the log said); the last read starts before the deadline, so a pass gives up after about 60-65 s.
     tries = LEADERTRIES if tries is None else tries
     wait = LEADERWAIT if wait is None else wait
+    budget = LEADERBUDGET if budget is None else budget
     import time as _t
+    start = _t.monotonic()
     for i in range(tries):
         val = str(get(leaderip, 'leader')[0]).strip()
         if val not in BADVAL and ' ' not in val:
             return val
-        if i < tries - 1:
-            _t.sleep(wait)
+        if i >= tries - 1 or _t.monotonic() - start + wait >= budget:
+            break
+        _t.sleep(wait)
     return None
 
 def restetcd(leader,leaderip, myhost,myhostip):
@@ -880,10 +898,12 @@ if __name__=='__main__':
     myhost=sys.argv[3]
     # r10h (finding 8): the syncrequest looper's pass needs a real leader name, or it does nothing (the other kinds --
     # syncinit, syncall, restetcd -- are one-shot calls of docker_setup and keep their single read)
-    looperpass = sys.argv[1] == 'syncrequest'
+    looperpass = sys.argv[1] == 'syncrequest' and iscontainer()      # r10h pass 2 (G8): physical keeps the single read
+    import time as _tm
+    _t0 = _tm.monotonic()
     leader = leaderread(leaderip) if looperpass else get(leaderip,'leader')[0]
     if leader is None:
-        synclog(sys.argv[1]+' of '+myhost+': the leader name at '+leaderip+' did not answer in '+str(LEADERTRIES*LEADERWAIT)+' s, pass skipped')
+        synclog(sys.argv[1]+' of '+myhost+': the leader name at '+leaderip+' did not answer in '+str(int(_tm.monotonic()-_t0))+' s (limit '+str(LEADERBUDGET)+' s), pass skipped')
         sys.exit(0)
     myhostip = get(leaderip,'ActivePartners/'+myhost)[0]
     if myhost == leader:

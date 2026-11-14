@@ -156,6 +156,11 @@ def memberimportdir(pool, disks):
   return ''
  return impdir
 
+def iscontainer():
+ # r10h pass 2 (validator G8): the r10h changes of this file (findings 5 and 3) are for the container flavour only; the
+ # physical path stays as it was (CLAUDE.md hard rule 1).  The same test as flavor.sh.
+ return os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')
+
 def importscan(impdir):
  # r10h (finding 3): the pools 'zpool import -d <impdir>' lists, as [{'name','id','state','members'}]
  cmd = ['timeout','60','/usr/sbin/zpool','import'] + (['-d', impdir] if impdir else [])
@@ -368,7 +373,8 @@ def _zpooltoimport(*args):
             dels(etcdip, 'poouids/'+pool) 
         else:
             print('pool not ready yet')
- actpoolreconcile(mypools)      # r10h (finding 5)
+ if iscontainer():
+  actpoolreconcile(mypools)      # r10h (finding 5); container flavour only (G8)
  if myhost not in str(needtoimport):
   print(needtoimport)
   print('no need to import a pool here')
@@ -428,9 +434,12 @@ def _zpooltoimport(*args):
    print(cmdline)
    decision(pool, 'importing: '+cmdline)
    put(leaderip, 'pools/'+pool,myhost)
-   res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
    failnote = ''
-   if res.returncode != 0:
+   if not iscontainer():
+    res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)      # physical: as before r10h (G8)
+   else:
+    res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+   if res.returncode != 0 and iscontainer():
     # r10h (finding 3): why the import failed was thrown away ("import failed (rc 1)" 84 times, nothing else)
     failnote = ': '+res.stderr.decode('utf-8','replace').strip().replace('\n',' | ')[:300]
     alt, why = importbyname(pool, poolid, impdir)
