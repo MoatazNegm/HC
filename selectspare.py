@@ -494,6 +494,176 @@ def reonlineleg(raid, disk):
              +', now '+(now or '?')+('' if ok else ' -- not in use, retried in '+str(REONLINEWAIT)+' s: '+res.stderr.decode('utf-8','replace').strip()[:200]))
  return ok
 
+# QSD5.352 r10h (QC proof 10g finding 7): the leader's optimizer took disks that only LOOK free.  The free list is every
+# LIO disk that no ready node reports in one of its pools, so it also held (1) the legs of a pool that waits to be imported
+# (exported by the stopping owner, not imported yet by the next host: P1's last zfs2 leg went to a sink pool 45 s after
+# the export, then its zfs1 leg 46 s after zfs1's disks came back: P1 lost), (2) the disk of a REMOVED / UNAVAIL leg of an
+# imported pool that has just come back (zpool status names that leg by its guid, "was /dev/disk/by-id/scsi-..."), and
+# (3) a disk that was replaced out of a pool as FAULTED / OFFLINE seconds before (it went into a healthy pool 24 s later).
+# 'zpool replace -f' then overrode ZFS's "is part of exported pool" refusal.  Container flavour (the physical flavour
+# keeps its path): a free disk is RESERVED -- not offered to the optimizer, and not replaced in by the owner -- when
+#   inpool      its id is named in 'zpool status' (any pool this kernel has imported, also as "was ..." of a lost leg);
+#   pending     it is a member, in 'zpool import', of a pool this cluster knows (ActPool/ or poolnxt/) that is not imported;
+#   quarantine  it left a pool as FAULTED / OFFLINE less than SPAREQUARANTINE ago (leader key sparequarantine/<disk>,
+#               '<stamp>/<pool>/<state>'; deleting the key frees the disk at once);
+#   grace       (leader only) it has been free for less than SPAREGRACE: a disk that just came back, or just left a pool,
+#               waits until the imports and re-onlines of that moment are done (a new leader starts every disk's grace).
+# And while any pool of the cluster is not ONLINE (degraded), the healthy raids are not re-balanced: free disks are kept
+# for the healing.  Every change of the reserved set is logged in /root/sparereserve.log (/root/sparereserve.now = now).
+SPAREGRACE = 180
+SPAREQUARANTINE = 86400
+SPAREGRACEF = '/root/sparegrace.last'
+SPARERESERVELOG = '/root/sparereserve.log'
+SPARERESERVENOW = '/root/sparereserve.now'
+QUARANTINEKEY = 'sparequarantine/'
+SCSIRE = re.compile(r'scsi-[0-9A-Za-z]+')
+SDRE = re.compile(r'\b(sd[a-z]+)[0-9]*\b')
+
+def zout(args, t=60):
+ try:
+  return subprocess.run(['timeout', str(t)]+args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode('utf-8', 'replace')
+ except Exception:
+  return ''
+
+def poolsections(text):
+ # {pool: its part of a 'zpool status' / 'zpool import' listing}
+ secs = {}
+ name = None
+ for line in text.split('\n'):
+  w = line.split()
+  if len(w) >= 2 and w[0] == 'pool:':
+   name = w[1]
+   secs[name] = ''
+  elif name is not None:
+   secs[name] += line+'\n'
+ return secs
+
+def namedin(disk, text):
+ ids = set(m.group(0) for m in SCSIRE.finditer(text))
+ sds = set(m.group(1) for m in SDRE.finditer(text))
+ return str(disk.get('name', '')) in ids or str(disk.get('actualdisk', '')) in ids or str(disk.get('devname', '-')) in sds
+
+def pendingpools(allinfo):
+ known = set()
+ for pfx in ('ActPool/', 'poolnxt/'):
+  for row in get(leaderip, pfx, '--prefix'):
+   if isinstance(row, (list, tuple)) and len(row) > 1 and str(row[0]).startswith(pfx):
+    known.add(str(row[0])[len(pfx):])
+ imported = set(zout(['/sbin/zpool', 'list', '-H', '-o', 'name'], 30).split()) | set(allinfo.get('pools', {}).keys())
+ return set(p for p in known if p and p not in imported)
+
+def quarantined(now):
+ res = {}
+ for row in get(leaderip, QUARANTINEKEY, '--prefix'):
+  if not (isinstance(row, (list, tuple)) and len(row) > 1 and str(row[0]).startswith(QUARANTINEKEY)):
+   continue
+  try:
+   since = float(str(row[1]).split('/')[0])
+  except ValueError:
+   since = now            # unreadable stamp: counts from now (kept until the admin deletes the key)
+  if now - since < SPAREQUARANTINE:
+   res[str(row[0])[len(QUARANTINEKEY):]] = str(row[1])
+ return res
+
+def gracewait(freenames, now):
+ first = {}
+ try:
+  with open(SPAREGRACEF) as f:
+   for line in f:
+    k, sp, v = line.strip().partition(' ')
+    if sp:
+     first[k] = float(v)
+ except Exception:
+  pass
+ keep = dict((n, first.get(n, now)) for n in freenames)
+ try:
+  tmp = SPAREGRACEF+'.'+str(os.getpid())
+  with open(tmp, 'w') as f:
+   for k, v in keep.items():
+    f.write(k+' '+str(v)+'\n')
+  os.replace(tmp, SPAREGRACEF)
+ except Exception:
+  pass
+ return dict((n, int(now-keep[n])) for n in freenames if now - keep[n] < SPAREGRACE)
+
+def sparereserved(allinfo, disks, grace=True):
+ # disks: {name: disk dict} of free disks; returns {name: reason} of those that must not be used now
+ if not iscontainer():
+  return {}
+ now = stamp()
+ if not disks:
+  if grace:
+   gracewait([], now)       # no free disk now: a disk free again later starts a new grace
+  return {}
+ why = {}
+ status = poolsections(zout(['/sbin/zpool', 'status'], 60))
+ for name, d in disks.items():
+  for pool, sec in status.items():
+   if namedin(d, sec):
+    why[name] = 'inpool '+pool
+    break
+ pending = pendingpools(allinfo)
+ if pending:
+  scan = poolsections(zout(['/sbin/zpool', 'import'], 90))
+  for name, d in disks.items():
+   if name in why:
+    continue
+   for pool, sec in scan.items():
+    if pool in pending and namedin(d, sec):
+     why[name] = 'pending '+pool
+     break
+ quar = quarantined(now)
+ for name in disks:
+  if name not in why and name in quar:
+   why[name] = 'quarantine '+quar[name]
+ if grace:
+  for name, age in gracewait(list(disks.keys()), now).items():
+   if name not in why:
+    why[name] = 'grace free for '+str(age)+' s < '+str(SPAREGRACE)+' s'
+ reservelog(why)
+ return why
+
+def reservelog(why):
+ kinds = '\n'.join(sorted(k+' '+v.split(' free for ')[0] for k, v in why.items()))
+ try:
+  old = open(SPARERESERVENOW).read()
+ except Exception:
+  old = None
+ if old == kinds:
+  return
+ try:
+  with open(SPARERESERVENOW, 'w') as f:
+   f.write(kinds)
+  reonlinelog_to(SPARERESERVELOG, 'reserved now: '+('; '.join(k+' ('+v+')' for k, v in sorted(why.items())) or 'none'))
+ except Exception:
+  pass
+
+def reonlinelog_to(path, msg):
+ try:
+  from datetime import datetime
+  with open(path, 'a') as f:
+   f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+str(myhost)+' '+msg+'\n')
+ except Exception:
+  pass
+
+def quarantineleg(pool, name, state):
+ # the owner replaced a FAULTED / OFFLINE leg out of <pool>: its disk must not go into a pool again right away
+ if not iscontainer() or not str(name).startswith('scsi-'):
+  return
+ if not any(x in str(state) for x in ('FAULT', 'OFFLINE')):
+  return
+ put(leaderip, QUARANTINEKEY+name, str(stamp())+'/'+str(pool)+'/'+str(state))
+ reonlinelog_to(SPARERESERVELOG, 'quarantine '+name+': replaced out of '+str(pool)+' as '+str(state)+' (free again after '+str(SPAREQUARANTINE)+' s or when the key '+QUARANTINEKEY+name+' is deleted)')
+
+def degradedpools(allinfo):
+ res = set()
+ for rname, raid in allinfo.get('raids', {}).items():
+  if 'free' in str(raid.get('name', '')) or raid.get('pool') in ('pree', None):
+   continue
+  if 'ONLINE' not in str(raid.get('status', '')):
+   res.add(str(raid.get('pool')))
+ return res
+
 def solvedegradedraid(raid,diskname):
  global leader, leaderip, myhost, myhostip, etcdip
  if 'dm-' in str(diskname):
@@ -654,6 +824,17 @@ def spare2(*args):
       raidname = raidinfo[0].split('/')[-1]
       rmdiskname = raidinfo[1].split('/')[0]
       adiskname = raidinfo[1].split('/')[1]
+      rmorig = rmdiskname
+      rmstate = str(allinfo['disks'].get(rmorig, {}).get('status', ''))
+      # r10h (finding 7): the request was made by the leader some seconds ago; a disk that is reserved NOW (a member of a
+      # pool waiting to import, of an imported pool, or quarantined) is not replaced in: 'zpool replace -f' would override
+      # ZFS's own "part of exported pool" refusal.  The request is dropped; the leader's next pass decides again.
+      held = sparereserved(allinfo, {adiskname: allinfo['disks'].get(adiskname, {'name': adiskname})}, grace=False)
+      if adiskname in held:
+         reonlinelog_to(SPARERESERVELOG, 'replace request '+poolname+' '+rmorig+' -> '+adiskname+' dropped: '+held[adiskname])
+         dels(leaderip,'ask/needtoreplace',adiskname)
+         dels(leaderip,'needtoreplace',adiskname)
+         continue
       print('rmdisk:',rmdiskname)
       print('raidname:',raidname)
       print('adiskname:',adiskname)
@@ -686,7 +867,9 @@ def spare2(*args):
       print('cmdline2'," ".join(cmdline2))
       print('theresult',forget.stdout.decode())
       print('return code',forget.returncode)
-      #if forget.returncode == 0: 
+      if forget.returncode == 0:
+         quarantineleg(poolname, rmorig, rmstate)      # r10h (finding 7)
+      #if forget.returncode == 0:
       #  dels(leaderip,'offline',poolname)
       dels(leaderip,'ask/needtoreplace',adiskname)
       dels(leaderip,'needtoreplace',adiskname)
@@ -737,9 +920,16 @@ def spare2(*args):
  for diskname in allinfo['disks']:
     disk = allinfo['disks'][diskname]
     if disk['changeop'] in ['free']:
-       alldisks[disk['name']] = disk.copy() 
+       alldisks[disk['name']] = disk.copy()
+ # r10h (finding 7): disks that only look free are not offered (container flavour; see sparereserved)
+ for name in sparereserved(allinfo, alldisks):
+    alldisks.pop(name, None)
+ degraded = degradedpools(allinfo) if iscontainer() else set()
  for raidname in allinfo['raids']:
     raid = allinfo['raids'][raidname]
+    if degraded and 'ONLINE' in str(raid.get('status', '')):
+        print('re-balance held, pools not ONLINE:', degraded, raidname)
+        continue
     # QSD5.345: the free list AND the spare-cache list (raid 'cache' of the pseudo pool 'pree', putzpool.py) are not raids of
     # a pool: nothing to optimize there.  The cache list was not skipped, solvefaultyreplace() raised KeyError
     # 'replacingroup' on its disk and the exception ended every selectspare pass of the leader, so with one disk on the
