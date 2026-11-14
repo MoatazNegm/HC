@@ -156,6 +156,84 @@ def memberimportdir(pool, disks):
   return ''
  return impdir
 
+def importscan(impdir):
+ # r10h (finding 3): the pools 'zpool import -d <impdir>' lists, as [{'name','id','state','members'}]
+ cmd = ['timeout','60','/usr/sbin/zpool','import'] + (['-d', impdir] if impdir else [])
+ try:
+  out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode('utf-8','replace')
+ except Exception:
+  return []
+ res = []
+ cur = None
+ inconfig = False
+ for line in out.split('\n'):
+  w = line.split()
+  if len(w) >= 2 and w[0] == 'pool:':
+   cur = {'name': w[1], 'id': '', 'state': '', 'members': []}
+   res.append(cur)
+   inconfig = False
+  elif cur is None or not w:
+   continue
+  elif w[0] == 'id:' and len(w) >= 2:
+   cur['id'] = w[1]
+  elif w[0] == 'state:' and len(w) >= 2:
+   cur['state'] = w[1]
+  elif w[0] == 'config:':
+   inconfig = True
+  elif inconfig and len(w) >= 2 and w[0] != cur['name'] and not w[0].startswith(('mirror', 'raidz', 'spare', 'cache', 'logs', 'replacing', 'draid')):
+   cur['members'].append(w[0])
+ return res
+
+def importbyname(pool, poolid, impdir):
+ # QSD5.352 r10h (QC proof 10g finding 3): an import by the published id (ActPool/<pool>) that fails is retried by name
+ # ONLY when that is safe: etcd lists member disks of the pool (impdir), the id is not among the pools on those disks at
+ # all (the published id is stale, finding 5), and exactly ONE pool of that name is there and it is ONLINE (every member
+ # present with the same, newest label).  Several pools of that name (a stale leg of an older id: QSD5.304 lost data that
+ # way), or only a DEGRADED one, are never imported by name: the candidates are logged and nothing is done.
+ # Returns (id or None, why).
+ if not impdir:
+  return None, 'no import by name: etcd lists no member disk of '+pool
+ cands = [c for c in importscan(impdir) if c['name'] == pool]
+ desc = ', '.join(c['id']+' '+c['state']+' ('+' '.join(c['members'])+')' for c in cands) or 'none'
+ if any(c['id'] == str(poolid) for c in cands):
+  return None, 'no import by name: id '+str(poolid)+' is on the member disks ('+desc+')'
+ if len(cands) != 1:
+  return None, 'no import by name: '+str(len(cands))+' pools named '+pool+' on the member disks: '+desc
+ if cands[0]['state'] != 'ONLINE' or not cands[0]['id'].isdigit():
+  return None, 'no import by name: the only pool named '+pool+' on the member disks is not ONLINE: '+desc
+ return cands[0]['id'], 'import by name: id '+str(poolid)+' is not on the member disks, the only pool named '+pool+' there is '+desc
+
+ACTLOG = '/root/actpoolreconcile.log'
+def actpoolreconcile(mypools):
+ # QSD5.352 r10h (QC proof 10g finding 5, new-leader variant): after a take over the new owner imported P1 by its id and
+ # gave it a new one (reguid), but the put of ActPool/<pool> went to the cluster address while the leadership moved: the
+ # leader kept the OLD id (the next leader stop would import by a dead id; repaired by hand in the proof).  The owner of
+ # an imported pool now compares, every pass, the id the leader publishes with the pool's live guid and puts the live one
+ # (with the same sync request as after an import) when they differ.  Only existing ActPool keys are corrected.
+ for v in mypools:
+  pool = str(v.get('name','')) if isinstance(v, dict) else ''
+  if not pool or 'pree' in pool:
+   continue
+  try:
+   if str(get(leaderip,'destroying/'+pool)[0]) != '_1' or destroyedpool(pool):
+    continue
+   pub = str(get(leaderip,'ActPool/'+pool)[0])
+   if pub in ('_1','-1','','None') or not importedhere(pool):
+    continue
+   live = subprocess.run(['timeout','20','/sbin/zpool','get','-H','-o','value','guid',pool],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode().strip()
+  except Exception:
+   continue
+  if not live.isdigit() or live == pub:
+   continue
+  dels(leaderip,'sync/ActPool', pool)
+  put(leaderip,'ActPool/'+pool,live)
+  dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+live+'/request','actpool_'+str(stamp()))
+  try:
+   with open(ACTLOG,'a') as f:
+    f.write(subprocess.run(['date','+%F %T'],stdout=subprocess.PIPE).stdout.decode().strip()+' '+myhost+' '+pool+': leader '+leaderip+' published '+pub+', live guid '+live+': corrected\n')
+  except Exception:
+   pass
+
 DECISIONF = '/root/zpooltoimport.last'
 def lastdecisions():
  # r10d (validator 10c D5): the last decision per pool is kept in a file, one 'pool<TAB>why' line each: the looper
@@ -290,6 +368,7 @@ def _zpooltoimport(*args):
             dels(etcdip, 'poouids/'+pool) 
         else:
             print('pool not ready yet')
+ actpoolreconcile(mypools)      # r10h (finding 5)
  if myhost not in str(needtoimport):
   print(needtoimport)
   print('no need to import a pool here')
@@ -349,7 +428,19 @@ def _zpooltoimport(*args):
    print(cmdline)
    decision(pool, 'importing: '+cmdline)
    put(leaderip, 'pools/'+pool,myhost)
-   res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+   res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+   failnote = ''
+   if res.returncode != 0:
+    # r10h (finding 3): why the import failed was thrown away ("import failed (rc 1)" 84 times, nothing else)
+    failnote = ': '+res.stderr.decode('utf-8','replace').strip().replace('\n',' | ')[:300]
+    alt, why = importbyname(pool, poolid, impdir)
+    failnote += '; '+why
+    if alt:
+     decision(pool, 'import of '+str(poolid)+' failed (rc '+str(res.returncode)+')'+failnote)
+     cmdline = '/usr/sbin/zpool import -d '+impdir+' '+alt
+     res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+     if res.returncode != 0:
+      failnote += '; import of '+alt+' failed too: '+res.stderr.decode('utf-8','replace').strip().replace('\n',' | ')[:300]
    result = res.stdout.decode('utf-8')
    sleep(1)
    cmdline= '/usr/sbin/zpool status  '
@@ -407,7 +498,7 @@ def _zpooltoimport(*args):
     #cmdline= 'systemctl restart zfs-zed  '
     #result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
    else:
-    decision(pool, 'import failed (rc '+str(res.returncode)+'), retried in the next round')
+    decision(pool, 'import failed (rc '+str(res.returncode)+'), retried in the next round'+failnote)
     dels(leaderip, 'pools/',pool)         # not imported (yet): poolnxt stays, the next round (9 s) tries again
         
     
