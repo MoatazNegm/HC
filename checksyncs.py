@@ -810,22 +810,55 @@ def poolidsfollow(leaderip, myhostip):
         mine = prefixread(myhostip, pfx)
         if lead is None or mine is None:
             continue
-        if not lead:
-            # r10h pass 2 (validator G7): the leader's etcd answers but has no pool id at all (a fresh, rebuilt or just
-            # promoted etcd without the keys): this node's copy may be the only right one, nothing is removed
-            continue
-        for k, v in lead.items():
-            if mine.get(k) != v:
-                put(myhostip, k, v)
-                poolidlog('copied from the leader ' + leaderip + ': ' + k + ' = ' + v + ' (was ' + str(mine.get(k, 'missing')) + ')')
-                changed += 1
-        for k in mine:
-            if k not in lead:
-                subprocess.run(['etcdctl', '--endpoints=http://' + myhostip + ':2379', 'del', k], stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, env=dict(os.environ, ETCDCTL_API='3'))
-                poolidlog('removed, the leader ' + leaderip + ' has no ' + k + ' (was ' + mine[k] + ')')
-                changed += 1
+        copies, removes = poolidplan(leaderip, pfx, lead, mine)
+        for k, v in copies:
+            put(myhostip, k, v)
+            poolidlog('copied from the leader ' + leaderip + ': ' + k + ' = ' + v + ' (was ' + str(mine.get(k, 'missing')) + ')')
+            changed += 1
+        for k, why in removes:
+            subprocess.run(['etcdctl', '--endpoints=http://' + myhostip + ':2379', 'del', k], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, env=dict(os.environ, ETCDCTL_API='3'))
+            poolidlog('removed, ' + why + ' (was ' + mine[k] + ')')
+            changed += 1
     return changed
+
+def poolidplan(leaderip, pfx, lead, mine):
+    # r10h: what poolidsfollow() changes on a follower whose pool ids are <mine> while the leader's are <lead>, as
+    # ([(key, leader value) to copy], [(key, reason) to remove]).  poolidsdiffer() uses the same plan, so the leader's
+    # isinsync and the follower's copy never disagree (a follower is out of sync exactly when the plan is not empty).
+    # r10h pass 3 (validator R1): the leader's prefix may answer EMPTY for two reasons: (a) a fresh, rebuilt or just
+    # promoted etcd without the keys (pass 2, G7: the follower's copy may be the only right one, keep it) and (b) the
+    # normal state after the LAST pool was deleted while this node was stopped (DGdestroyPool deletes the follower copies
+    # only through a sync request that is pruned once the ACTIVE nodes acked it; tombstonesonreturn() copies the
+    # tombstone but never touches ActPool/).  Pass 2 kept the dead key for good and the leader's isinsync stayed 'no'
+    # until a new pool was created.  Now, with an empty leader prefix, a follower key is removed only when the leader
+    # holds a tombstone destroyedpool/<pool> or has neither pools/<pool> nor poolnxt/<pool> (no live pool of that
+    # name); a key of a live pool is kept.  When one of these leader reads fails nothing is removed.
+    copies, removes = [], []
+    if lead:
+        for k, v in sorted(lead.items()):
+            if mine.get(k) != v:
+                copies.append((k, v))
+        for k in sorted(mine):
+            if k not in lead:
+                removes.append((k, 'the leader ' + leaderip + ' has no ' + k))
+        return copies, removes
+    if not mine:
+        return copies, removes
+    stones = prefixread(leaderip, 'destroyedpool/')
+    pools = prefixread(leaderip, 'pools/')
+    nxt = prefixread(leaderip, 'poolnxt/')
+    if stones is None or pools is None or nxt is None:
+        return copies, removes
+    for k in sorted(mine):
+        pool = k[len(pfx):]
+        if not pool:
+            continue
+        if _alive(stones.get('destroyedpool/' + pool, '')):
+            removes.append((k, 'the leader ' + leaderip + ' has no pool ids and a tombstone destroyedpool/' + pool))
+        elif not _alive(pools.get('pools/' + pool, '')) and not _alive(nxt.get('poolnxt/' + pool, '')):
+            removes.append((k, 'the leader ' + leaderip + ' has no pool ids and no pools/' + pool + ' or poolnxt/' + pool))
+    return copies, removes
 
 def poolidsdiffer(leaderip, leader):
     # r10h (finding 5): the leader's insync() also compares every ready follower's pool ids with its own; a follower that
@@ -843,7 +876,10 @@ def poolidsdiffer(leaderip, leader):
         if host == leader or ip in ('', '_1', leaderip):
             continue
         mine = prefixread(ip, 'ActPool/')
-        if mine is not None and mine != lead:
+        if mine is None:
+            continue
+        copies, removes = poolidplan(leaderip, 'ActPool/', lead, mine)     # r10h pass 3 (R1): the follow rule
+        if copies or removes:
             bad.append(host)
     return bad
 
