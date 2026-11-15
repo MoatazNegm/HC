@@ -4,6 +4,15 @@ echo $@ `date` > /root/hostlost
 # container flavour: a dead node leaves its iSCSI target and its imported pools in the kernel all nodes share.
 # The leader removes them and exports the pools, so the normal take over (poolnxt -> zpooltoimport.py) can run.
 [ -f /TopStor/flavor.sh ] && . /TopStor/flavor.sh
+# QSD5.352 r10i (QC proof 10h O3): never for this node itself.  heartbeat.py of the leader called this script for its OWN
+# host once (its etcd was slow): the loop below deleted its own disks from sysfs and closthost.sh removed its own target
+# and exported its pool, so the other node took the pool over.  Container flavour: refused and logged (the caller is fixed
+# too, this is the second guard).
+if is_container 2>/dev/null && [ -n "`echo $@ | awk '{print $5}'`" ] && [ "`echo $@ | awk '{print $5}'`" = "`echo $@ | awk '{print $3}'`" ]
+then
+	echo "`date '+%F %T'` hostlost.sh $@: refused, the lost host is this node itself (r10i)" >> /root/hostlostrefused.log
+	exit 0
+fi
 if is_container 2>/dev/null && [ "`echo $@ | awk '{print $1}'`" = "`echo $@ | awk '{print $3}'`" ]
 then
 	setsid nohup /pace/closthost.sh `echo $@ | awk '{print $5}'` >/dev/null 2>&1 </dev/null &

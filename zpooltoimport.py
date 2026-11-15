@@ -134,6 +134,74 @@ def poolishere(pool):
  return os.path.exists('/proc/spl/kstat/zfs/'+pool)
 
 
+def membernames(pool, disks, strict=False):
+ # the disk names etcd lists as members of <pool>; strict (what is remembered): no guid-named legs, stand-ins or 'None'
+ names = []
+ for name, d in disks.items():
+  if not isinstance(d, dict) or d.get('pool') != pool:
+   continue
+  for key in ('actualdisk','zname','name'):
+   dname = str(d.get(key,'')).replace('/dev/disk/by-id/','')
+   if not dname or dname == '_1' or dname in names:
+    continue
+   if strict and (dname == 'None' or dname.isdigit() or dname.startswith('dm-')):
+    continue
+   names.append(dname)
+ return names
+
+# r10i (QC proof 10h F2: 745.2, 746.2): the member disks come from the cluster disk map, and that map is made of what each
+# READY node publishes (hosts/<host>/current) about the pools IT owns.  When the owner stops, hostlost deletes its hosts/
+# keys, and the disks of its pools -- also the ones on the surviving node -- are listed as free ('pree'): memberimportdir()
+# found no member, the import ran without '-d' and the by-name fallback always said 'etcd lists no member disk'.  Every node
+# now remembers, each import pass, the members the map lists for every pool (/root/poolmembers.last, replaced whenever the
+# map lists the pool again, so a leg that was detached meanwhile is not kept); the import uses that list when the live map
+# has no member.  Entries not refreshed for MEMBERKEEP s are dropped.  Container flavour only.
+MEMBERF = '/root/poolmembers.last'
+MEMBERKEEP = 7*86400
+MEMBERREFRESH = 600
+def lastmembers():
+ import json
+ try:
+  with open(MEMBERF) as f:
+   d = json.load(f)
+  return d if isinstance(d, dict) else {}
+ except Exception:
+  return {}
+
+def remembermembers(disks):
+ import json
+ old = lastmembers()
+ now = stamp()
+ new = {}
+ pools = set(str(d.get('pool','')) for d in disks.values() if isinstance(d, dict) and 'pdhcp' in str(d.get('pool','')))
+ for pool in pools:
+  names = membernames(pool, disks, strict=True)
+  if names:
+   new[pool] = {'stamp': now, 'members': names}
+ for pool, v in old.items():
+  try:
+   if pool not in new and now - float(v.get('stamp', 0)) < MEMBERKEEP:
+    new[pool] = v
+  except Exception:
+   pass
+ # unchanged members of a pool keep their stamp for up to MEMBERREFRESH s: the file is not rewritten every 9 s
+ for pool, v in list(new.items()):
+  try:
+   if pool in old and old[pool].get('members') == v.get('members') and now - float(old[pool].get('stamp', 0)) < MEMBERREFRESH:
+    new[pool] = old[pool]
+  except Exception:
+   pass
+ if new == old:
+  return
+ try:
+  tmp = MEMBERF+'.'+str(os.getpid())
+  with open(tmp, 'w') as f:
+   json.dump(new, f)
+  os.replace(tmp, MEMBERF)
+ except Exception:
+  pass
+
+MEMBERSRC = {}
 def memberimportdir(pool, disks):
  # a directory of symlinks to the by-id devices (and their partitions) of the disks etcd lists in <pool>; '' when none is present
  import glob
@@ -141,12 +209,17 @@ def memberimportdir(pool, disks):
  subprocess.run(['rm','-rf',impdir])
  os.makedirs(impdir, exist_ok=True)
  found = 0
- for name, d in disks.items():
-  if d.get('pool') != pool:
-   continue
-  for key in ('actualdisk','zname','name'):
-   dname = str(d.get(key,'')).replace('/dev/disk/by-id/','')
-   if dname and dname != '_1':
+ names = membernames(pool, disks)
+ MEMBERSRC[pool] = 'etcd'
+ if not names and iscontainer():
+  # r10i (F2): the live map has no member (the owner that published it is gone): the members it listed last
+  last = lastmembers().get(pool, {})
+  names = [str(n) for n in last.get('members', []) if str(n)]
+  try:
+   MEMBERSRC[pool] = 'members as last listed '+str(int(stamp()-float(last.get('stamp', 0))))+' s ago' if names else 'none'
+  except Exception:
+   MEMBERSRC[pool] = 'members as last listed' if names else 'none'
+ for dname in names:
     for dev in glob.glob('/dev/disk/by-id/'+dname+'*'):
      link = impdir+'/'+os.path.basename(dev)
      if not os.path.exists(link):
@@ -197,6 +270,8 @@ def importbyname(pool, poolid, impdir):
  # way), or only a DEGRADED one, are never imported by name: the candidates are logged and nothing is done.
  # Returns (id or None, why).
  if not impdir:
+  if iscontainer() and MEMBERSRC.get(pool) == 'none':
+   return None, 'no import by name: etcd lists no member disk of '+pool+' and none was remembered ('+MEMBERF+')'
   return None, 'no import by name: etcd lists no member disk of '+pool
  cands = [c for c in importscan(impdir) if c['name'] == pool]
  desc = ', '.join(c['id']+' '+c['state']+' ('+' '.join(c['members'])+')' for c in cands) or 'none'
@@ -341,10 +416,13 @@ def _zpooltoimport(*args):
  if 'not reachable' in str(nextpools):
         return
  needtoimport=[ x for x in nextpools if myhost in str(x)] 
- pools = [v for k,v in getall(leaderip)['pools'].items()]
+ allnow = getall(leaderip)
+ pools = [v for k,v in allnow['pools'].items()]
  mypools = [v  for v in pools if v['host'] == myhost ]
  if 'not reachable' in str(pools):
         return
+ if iscontainer():
+  remembermembers(allnow.get('disks', {}))     # r10i (F2)
  if '_1' in str(poouids):
     poouids = []
  for poo in poouids:
@@ -432,7 +510,8 @@ def _zpooltoimport(*args):
    # poolnxt/<pool> is the only trigger of this import: it is deleted only after the import worked (below).  It used to be deleted here,
    # before the import, so one failed first try (the disk session of the survivor was not up yet after a take over) orphaned the pool for ever.
    print(cmdline)
-   decision(pool, 'importing: '+cmdline)
+   src = MEMBERSRC.get(pool, 'etcd')
+   decision(pool, 'importing: '+cmdline+('' if src == 'etcd' or not impdir else ' ('+src+')'))
    put(leaderip, 'pools/'+pool,myhost)
    failnote = ''
    if not iscontainer():

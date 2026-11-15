@@ -31,6 +31,30 @@ def splitnext(value):
  parts = value.split('/')
  return parts[0], (parts[1] if len(parts) > 1 else '')
 
+def iscontainer():
+ return os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')
+
+# QSD5.352 r10i (QC proof 10h O3): the leader declared ITSELF lost.  The main loop reads 'ready' from this node's etcd 8 times
+# in a row (no pause); when no answer names a node it takes the LEADER for lost -- also when this node IS the leader (its own
+# etcd was slow for a few seconds).  zfs1 then ran hostlost.sh for itself: its own disks were deleted from sysfs, closthost.sh
+# removed its own iSCSI target (P1 lost its zfs1 leg for 46 s, the optimizer replaced it with a zfs2 disk), exported P1
+# ("it can be imported by the node the leader names"), and ready/<itself> was deleted: zfs2 imported P1 and the owner moved
+# (00:13:27-00:14:36 node time, 2.5 min after setup).  Container flavour: a node never runs the host-lost path for itself;
+# the failed read is logged (at most once a minute, /root/heartproblem) and the next loop reads again.
+SELFLOSTLAST = [0.0]
+def notmyself(host, why):
+ if host != myhost or not iscontainer():
+  return False
+ if stamp() - SELFLOSTLAST[0] >= 60:
+  SELFLOSTLAST[0] = stamp()
+  try:
+   from datetime import datetime
+   with open('/root/heartproblem','a') as f:
+    f.write('\n'+datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+myhost+' is the leader: '+why+'; not taken for lost (r10i), read again in the next loop\n')
+  except Exception:
+   pass
+ return True
+
 def getnextlead():
  # read only: a node never announces itself, the leader names the next leader and syncs it to every node
  global etcd, leader ,leaderip, myhost, myhostip, nextleader, nextleaderip
@@ -156,6 +180,8 @@ def leadernextlead(knowns):
 
 def hostlost(host, hostip):
                 global etcd, leader ,leaderip, myhost, myhostip, nextleader, nextleaderip
+                if notmyself(host, 'host-lost path asked for this node itself'):
+                        return
                 with open('/root/heartproblem','a') as f:
                         f.write('nmap:\n'+host+' '+hostip)
 
@@ -251,6 +277,8 @@ def heartbeat(*args):
             continue
         knownsn = len(knowns)
         if tries < 10: 
+           if notmyself(leader, "its own etcd answered 'ready' without a node 8 times"):
+               continue
            hostlost(leader, leaderip)
         elif myhost == leader:
            leadernextlead(knowns)

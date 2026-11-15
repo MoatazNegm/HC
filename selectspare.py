@@ -445,16 +445,52 @@ def devicerunning(name):
  except OSError:
   return False
 
-def legstate(pool, name):
+def poolstatus(pool):
  try:
-  out = subprocess.run(['timeout','30','/sbin/zpool','status',pool],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode('utf-8','replace')
+  return subprocess.run(['timeout','30','/sbin/zpool','status',pool],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode('utf-8','replace')
  except Exception:
   return ''
- for line in out.split('\n'):
+
+def legstate(pool, name):
+ # the state of the leg <name> (or of any of the names in a list: a leg listed by guid is listed by its disk name again once it is back)
+ names = name if isinstance(name, (list, tuple)) else [name]
+ for line in poolstatus(pool).split('\n'):
   w = line.split()
-  if len(w) >= 2 and w[0] == name:
+  if len(w) >= 2 and w[0] in names:
    return w[1]
  return ''
+
+# r10i (QC proof 10h F1: 724.3, 742.2e, h58:fo PY): a leg whose disk is missing when the pool is IMPORTED (the importer ran
+# before the disk was visible, or the pool was imported while that node was away) is listed by ZFS by its guid:
+#   13794363486589757794  UNAVAIL  0 0 0  was /dev/disk/by-id/scsi-36001405...-part1
+# putzpool then gives the leg name = the guid and host '_1' (lsscsi cannot be matched to a guid), and the re-online below
+# skipped it ('scsi' not in the name): the pool stayed DEGRADED for 16-36 min until a spare replaced the leg (full resilver).
+# Now the guid is mapped to its 'was /dev/disk/by-id/<disk>' path; when lsscsi lists that disk again and its SCSI device is
+# 'running', the leg is put back with 'zpool online <pool> <guid>' (the same rules: dead legs only, one try per 2 min, logged).
+GUIDRE = re.compile(r'^[0-9]{6,}$')
+WASRE = re.compile(r'\bwas\s+/dev/disk/by-id/(scsi-[0-9A-Za-z]+?)(-part[0-9]+)?\s*$')
+
+def wasdisk(pool, guid):
+ # the by-id name of the disk a guid-listed leg had ('' when zpool status names no by-id 'was' path for it)
+ for line in poolstatus(pool).split('\n'):
+  w = line.split()
+  if len(w) >= 2 and w[0] == guid:
+   m = WASRE.search(line.strip())
+   return m.group(1) if m else ''
+ return ''
+
+def lsscsilists(name):
+ # lsscsi -is lists the LIO disk <name> ('scsi-<wwid>'): its node is back and exports it again
+ try:
+  out = subprocess.run(['timeout','30','/bin/lsscsi','-is'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode('utf-8','replace')
+ except Exception:
+  return False
+ wwid = str(name)[len('scsi-'):] if str(name).startswith('scsi-') else str(name)
+ for line in out.split('\n'):
+  z = line.split()
+  if len(z) > 6 and 'LIO' in line and z[6] == wwid:
+   return True
+ return False
 
 def reonlineleg(raid, disk):
  # True when the leg is in use again (online, resilvering): nothing else to do for it in this pass
@@ -462,9 +498,19 @@ def reonlineleg(raid, disk):
   return False
  name = str(disk.get('name',''))
  status = str(disk.get('status',''))
- if 'scsi' not in name or not any(x in status for x in LEGDEAD):
+ if not any(x in status for x in LEGDEAD):
   return False
- if str(disk.get('host','_1')) in ('_1', 'UNAVAIL', '', 'None'):
+ legname = name            # the name ZFS knows the leg by (zpool online / status)
+ if GUIDRE.match(name):
+  # r10i (F1): listed by guid -> its disk from the 'was' path; host '_1' is normal here, lsscsi is asked directly
+  name = wasdisk(raid.get('pool',''), legname)
+  if not name:
+   return False            # no by-id 'was' path: the spare path decides (unchanged)
+  if not lsscsilists(name):
+   return False            # its node is not back
+ elif 'scsi' not in name:
+  return False
+ elif str(disk.get('host','_1')) in ('_1', 'UNAVAIL', '', 'None'):
   return False            # lsscsi does not list the disk: its node is not back
  if not devicerunning(name):
   return False
@@ -477,7 +523,7 @@ def reonlineleg(raid, disk):
      last[k] = float(v)
  except Exception:
   pass
- key = str(raid.get('pool',''))+'/'+name
+ key = str(raid.get('pool',''))+'/'+legname
  if stamp() - last.get(key, 0) < REONLINEWAIT:
   return False
  last[key] = stamp()
@@ -487,11 +533,13 @@ def reonlineleg(raid, disk):
     f.write(k+' '+str(v)+'\n')
  except Exception:
   pass
- res = subprocess.run(['timeout','60','/sbin/zpool','online',raid['pool'],name],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
- now = legstate(raid['pool'], name)
+ res = subprocess.run(['timeout','60','/sbin/zpool','online',raid['pool'],legname],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ now = legstate(raid['pool'], [legname, name])
  ok = res.returncode == 0 and now != '' and not any(x in now for x in LEGNOTINUSE)
- reonlinelog(raid['pool']+' leg '+name+' was '+status+', its disk is back (host '+str(disk.get('host'))+'): zpool online rc '+str(res.returncode)
+ leg = name if legname == name else legname+' (guid, was '+name+')'
+ reonlinelog(raid['pool']+' leg '+leg+' was '+status+', its disk is back (host '+str(disk.get('host'))+'): zpool online rc '+str(res.returncode)
              +', now '+(now or '?')+('' if ok else ' -- not in use, retried in '+str(REONLINEWAIT)+' s: '+res.stderr.decode('utf-8','replace').strip()[:200]))
+ sparehist('reonline '+raid['pool']+' leg '+leg+' was '+status+': rc '+str(res.returncode)+', now '+(now or '?'))
  return ok
 
 # QSD5.352 r10h (QC proof 10g finding 7): the leader's optimizer took disks that only LOOK free.  The free list is every
@@ -558,7 +606,15 @@ def pendingpools(allinfo):
    if isinstance(row, (list, tuple)) and len(row) > 1 and str(row[0]).startswith(pfx):
     known.add(str(row[0])[len(pfx):])
  imported = set((zout(['/sbin/zpool', 'list', '-H', '-o', 'name'], 30) or '').split()) | set(allinfo.get('pools', {}).keys())
- return set(p for p in known if p and p not in imported)
+ # r10i (QC proof 10h O4, judged): a 'pending' reservation has NO time limit -- its disks hold a pool this cluster still
+ # expects to import (ActPool/ or poolnxt/), and using them as spares would destroy it.  Only a pool that was DELETED
+ # (tombstone destroyedpool/<pool>, which zpooltoimport.py never imports) is not pending: a stale ActPool/ or poolnxt/ key of
+ # a deleted pool held its old legs for good.
+ dead = set()
+ for row in get(leaderip, 'destroyedpool/', '--prefix'):
+  if isinstance(row, (list, tuple)) and len(row) > 1 and str(row[0]).startswith('destroyedpool/') and str(row[1]) not in ('_1', '-1', '', 'None'):
+   dead.add(str(row[0])[len('destroyedpool/'):])
+ return set(p for p in known if p and p not in imported and p not in dead)
 
 def quarantined(now):
  res = {}
@@ -677,6 +733,30 @@ def reonlinelog_to(path, msg):
    f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+str(myhost)+' '+msg+'\n')
  except Exception:
   pass
+
+# r10i (QC proof 10h O5): /root/selectspare.log is the stdout of the LAST run only (selectsparelooper.sh writes it with '>'
+# every ~5 s), so a decision of the spare optimizer could not be traced afterwards (O3: who replaced P1's zfs1 leg?).  Every
+# decision is now also appended, one stamped line each, to /root/selectspare.history: a replace request the leader makes
+# (pool, raid, old disk and its host -> new disk and its host, why), a replace the owner runs (rc) or drops (why), a
+# re-online try.  Size cap SPAREHISTMAX: the file is moved to .1 (one old copy kept).  Container flavour; a failing write
+# (full disk) never stops the run.
+SPAREHIST = '/root/selectspare.history'
+SPAREHISTMAX = 2000000
+def sparehist(msg):
+ if not iscontainer():
+  return
+ try:
+  if os.path.exists(SPAREHIST) and os.path.getsize(SPAREHIST) > SPAREHISTMAX:
+   os.replace(SPAREHIST, SPAREHIST+'.1')
+ except Exception:
+  pass
+ reonlinelog_to(SPAREHIST, 'run '+str(os.getpid())+' '+str(msg))
+
+def diskhost(allinfo, name):
+ try:
+  return str(allinfo.get('disks', {}).get(name, {}).get('host', '?'))
+ except Exception:
+  return '?'
 
 def quarantineleg(pool, name, state):
  # the owner replaced a FAULTED / OFFLINE leg out of <pool>: its disk must not go into a pool again right away
@@ -879,6 +959,7 @@ def spare2(*args):
       held = sparereserved(allinfo, {adiskname: allinfo['disks'].get(adiskname, {'name': adiskname})}, grace=False, log=False)
       if adiskname in held:
          reonlinelog_to(SPARERESERVELOG, 'replace request '+poolname+' '+rmorig+' -> '+adiskname+' dropped: '+held[adiskname])
+         sparehist('owner: replace request '+poolname+' '+raidname+' '+rmorig+' -> '+adiskname+' dropped: '+held[adiskname])
          dels(leaderip,'ask/needtoreplace',adiskname)
          dels(leaderip,'needtoreplace',adiskname)
          continue
@@ -914,6 +995,9 @@ def spare2(*args):
       print('cmdline2'," ".join(cmdline2))
       print('theresult',forget.stdout.decode())
       print('return code',forget.returncode)
+      sparehist('owner: '+' '.join(cmdline2[1:])+' ('+raidname+', '+rmorig+' was '+(rmstate or '?')+' on host '+diskhost(allinfo, rmorig)
+                +', new disk on host '+diskhost(allinfo, adiskname)+'): rc '+str(forget.returncode)
+                +('' if forget.returncode == 0 else ' '+forget.stderr.decode('utf-8','replace').strip().replace('\n',' | ')[:200]))
       if forget.returncode == 0:
          quarantineleg(poolname, rmorig, rmstate)      # r10h (finding 7)
       #if forget.returncode == 0:
@@ -1028,6 +1112,11 @@ def spare2(*args):
                 for x in zip(list(toreplace),list(toplace)):
                     print(leaderip, 'needtoreplace/'+host+'/'+pool+'/'+raidname,x[0]+'/'+x[1])
                     put(leaderip, 'needtoreplace/'+host+'/'+pool+'/'+raidname,x[0]+'/'+x[1])
+                    old = [d for d in raid['disklist'] if d.get('name') == x[0]]
+                    sparehist('leader: request '+pool+' '+raidname+' (owner '+str(host)+', raid '+str(raid.get('status',''))+'): '
+                              +x[0]+' ('+(str(old[0].get('status','?')) if old else '?')+', host '+diskhost(allinfo, x[0])+') -> '
+                              +x[1]+' (host '+diskhost(allinfo, x[1])+'); why: '
+                              +('heal, the leg is not ONLINE' if old and 'ONLINE' not in str(old[0].get('status','')) else 'balance (optimizer)'))
  
  if alloptimized == 'no':
     print('still not all are optimized in this node')
