@@ -460,7 +460,8 @@ def leavehold(pool, devs, poolid=''):
   bad = sorted(set(st or 'unknown' for d, st in hd if st != 'LOGGED_IN'))
   if bad:
    return 'skipped: '+need+', its iSCSI session is '+'/'.join(bad)+' (the disks are going away); '+since, ''
-  ready = ('ready/'+h) in str(get(leaderip, 'ready', '--prefix'))
+  rd = get(leaderip, 'ready', '--prefix')
+  ready = any(isinstance(x, (list, tuple)) and x and str(x[0]) == 'ready/'+h for x in (rd if isinstance(rd, list) else []))
   if ready and age < HOLDMAX:
    return 'skipped: '+need+' and '+h+' is still ready (leaving: its target goes after the export); '+since+' (at most '+str(HOLDMAX)+' s)', ''
   if not ready and age < HOLDMIN:
