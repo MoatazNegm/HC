@@ -310,6 +310,15 @@ ISCSISESS = '/sys/class/iscsi_session/'
 HOLDF = '/root/zpooltoimport.hold'
 HOLDMAX = 120
 HOLDMIN = 30
+# r10l (validator 10k K1, K2): a hold entry is {host, first, last, notready}.  'last' is the time of the latest pass that
+# judged the pool (held or ended); an entry whose 'last' is more than HOLDGAP s old belongs to an earlier leave and a NEW
+# hold starts (round 10k reused its 'first': a later leave of the same owner was imported at once, inside the export ->
+# logout window).  'notready' is when the pass first saw the host out of ready/ (cleared when it is ready again): HOLDMIN
+# counts from it, not from the start of the hold.  Entries of pools this pass did not judge are dropped at the end of the
+# pass (the owner took the pool back, poolnxt moved, assignment withdrawn).  Passes run every ~9 s; if they are ever more
+# than HOLDGAP s apart a ready-hold starts again each time (longer wait, never an earlier import).
+HOLDGAP = 60
+HOLDSEEN = set()
 def targetof(dev):
  # (host, session state) of the iSCSI target that serves <dev>; ('', '') when it is no iSCSI disk or cannot be told
  import re
@@ -410,20 +419,42 @@ def holdsave(d):
  except Exception:
   pass
 
-def holdsince(pool, host):
- # the time the hold of <pool> for <host> began (kept in HOLDF across the passes; a new host starts a new hold)
+def holdnum(v):
+ try:
+  return float(v)
+ except Exception:
+  return None
+
+def holdentry(pool, host, ready, now=None):
+ # (first, notready) of the hold of <pool> for <host>, updated for this pass (r10l K1 / K2, see above).  The same host and
+ # a held pass less than HOLDGAP s ago continue the hold; anything else (another host, an old or a round 10k entry
+ # without 'last') starts a new one.  notready: None while <host> is ready, else when this hold first saw it not ready.
  d = holdstate()
- e = d.get(pool, {})
- now = stamp()
- if isinstance(e, dict) and e.get('host') == host:
-  try:
-   return float(e.get('first', now))
-  except Exception:
-   pass
- d = {p: v for p, v in d.items() if isinstance(v, dict) and now - float(v.get('first', 0) or 0) < 86400}
- d[pool] = {'host': host, 'first': now}
+ e = d.get(pool)
+ now = stamp() if now is None else now
+ last = holdnum(e.get('last')) if isinstance(e, dict) else None
+ first = holdnum(e.get('first')) if isinstance(e, dict) else None
+ cont = isinstance(e, dict) and e.get('host') == host and last is not None and first is not None and 0 <= now - last <= HOLDGAP
+ if not cont:
+  first = now
+ nr = None
+ if not ready:
+  nr = holdnum(e.get('notready')) if cont else None
+  if nr is None:
+   nr = now
+ d = {p: v for p, v in d.items() if isinstance(v, dict) and now - (holdnum(v.get('last', v.get('first'))) or 0) < 86400}
+ d[pool] = {'host': host, 'first': first, 'last': now}
+ if nr is not None:
+  d[pool]['notready'] = nr
  holdsave(d)
- return now
+ return first, nr
+
+def holdprune(seen):
+ # r10l (K1): drop the entries of pools this pass did not judge (no longer asked to import here, taken back, ...)
+ d = holdstate()
+ k = {p: v for p, v in d.items() if p in seen}
+ if len(k) != len(d):
+  holdsave(k)
 
 def holdclear(pool):
  d = holdstate()
@@ -433,6 +464,7 @@ def holdclear(pool):
 def leavehold(pool, devs, poolid=''):
  # ('' or the reason to wait, a note for the log when a hold ends): see the r10k comment above
  import re
+ HOLDSEEN.add(pool)                       # r10l (K1): judged in this pass, its entry is kept
  byhost = {}
  for d in devs:
   h, st = targetof(d)
@@ -454,19 +486,21 @@ def leavehold(pool, devs, poolid=''):
    if tops is None or survives(tops, lost):
     continue
    need = str(len(hd))+' of '+str(len(devs))+' member disks are on '+h+"'s target and "+pool+' cannot run without them'
-  first = holdsince(pool, h)
-  age = int(stamp() - first)
+  rd = get(leaderip, 'ready', '--prefix')
+  ready = any(isinstance(x, (list, tuple)) and x and str(x[0]) == 'ready/'+h for x in (rd if isinstance(rd, list) else []))
+  now = stamp()
+  first, nr = holdentry(pool, h, ready, now)       # r10l (K1, K2)
+  age = int(now - first)
   since = 'held since '+strftime('%H:%M:%S', localtime(first))
   bad = sorted(set(st or 'unknown' for d, st in hd if st != 'LOGGED_IN'))
   if bad:
    return 'skipped: '+need+', its iSCSI session is '+'/'.join(bad)+' (the disks are going away); '+since, ''
-  rd = get(leaderip, 'ready', '--prefix')
-  ready = any(isinstance(x, (list, tuple)) and x and str(x[0]) == 'ready/'+h for x in (rd if isinstance(rd, list) else []))
   if ready and age < HOLDMAX:
    return 'skipped: '+need+' and '+h+' is still ready (leaving: its target goes after the export); '+since+' (at most '+str(HOLDMAX)+' s)', ''
-  if not ready and age < HOLDMIN:
-   return 'skipped: '+need+'; '+h+' is not ready, its target still answers; '+since+' ('+str(HOLDMIN)+' s)', ''
-  return '', 'hold ended after '+str(age)+' s: '+need+', '+h+(' is still ready' if ready else ' is not ready')+', its session LOGGED_IN: imported as before'
+  nrs = 'not ready since '+strftime('%H:%M:%S', localtime(nr)) if nr is not None else ''
+  if not ready and now - nr < HOLDMIN:
+   return 'skipped: '+need+'; '+h+' is not ready, its target still answers; '+since+', '+nrs+' ('+str(HOLDMIN)+' s)', ''
+  return '', 'hold ended after '+str(age)+' s: '+need+', '+h+(' is still ready' if ready else ' is not ready ('+nrs+')')+', its session LOGGED_IN: imported as before'
  holdclear(pool)
  return '', ''
 
@@ -707,6 +741,7 @@ def _zpooltoimport(*args):
             print('pool not ready yet')
  if iscontainer():
   actpoolreconcile(mypools)      # r10h (finding 5); container flavour only (G8)
+ HOLDSEEN.clear()                         # r10l (K1): the pools whose hold this pass judges (leavehold)
  if myhost not in str(needtoimport):
   print(needtoimport)
   print('no need to import a pool here')
@@ -859,6 +894,8 @@ def _zpooltoimport(*args):
    else:
     decision(pool, 'import failed (rc '+str(res.returncode)+'), retried in the next round'+failnote)
     dels(leaderip, 'pools/',pool)         # not imported (yet): poolnxt stays, the next round (9 s) tries again
+ if iscontainer():
+  holdprune(HOLDSEEN)                     # r10l (K1): a hold entry lives only while its pool is judged every pass
         
     
  if myhost != leader:
