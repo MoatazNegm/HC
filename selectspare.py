@@ -419,6 +419,7 @@ LEGNOTINUSE = ('REMOVED', 'UNAVAIL', 'FAULT', 'OFFLINE')
 REONLINELOG = '/root/reonline.log'
 REONLINELAST = '/root/reonline.last'
 REONLINEWAIT = 120
+REONLINEPROBE = 30         # r10i (validator F1 note): a guid leg whose disk is not back is probed at most every 30 s
 BYID = '/dev/disk/by-id/'
 SYSBLOCK = '/sys/block/'
 
@@ -492,28 +493,8 @@ def lsscsilists(name):
    return True
  return False
 
-def reonlineleg(raid, disk):
- # True when the leg is in use again (online, resilvering): nothing else to do for it in this pass
- if not iscontainer():
-  return False
- name = str(disk.get('name',''))
- status = str(disk.get('status',''))
- if not any(x in status for x in LEGDEAD):
-  return False
- legname = name            # the name ZFS knows the leg by (zpool online / status)
- if GUIDRE.match(name):
-  # r10i (F1): listed by guid -> its disk from the 'was' path; host '_1' is normal here, lsscsi is asked directly
-  name = wasdisk(raid.get('pool',''), legname)
-  if not name:
-   return False            # no by-id 'was' path: the spare path decides (unchanged)
-  if not lsscsilists(name):
-   return False            # its node is not back
- elif 'scsi' not in name:
-  return False
- elif str(disk.get('host','_1')) in ('_1', 'UNAVAIL', '', 'None'):
-  return False            # lsscsi does not list the disk: its node is not back
- if not devicerunning(name):
-  return False
+def reonlinelast():
+ # the per-leg stamps of the last re-online try ('<pool>/<leg>') and of the last probe of a guid leg ('<pool>/<guid>#probe')
  last = {}
  try:
   with open(REONLINELAST) as f:
@@ -523,16 +504,50 @@ def reonlineleg(raid, disk):
      last[k] = float(v)
  except Exception:
   pass
- key = str(raid.get('pool',''))+'/'+legname
- if stamp() - last.get(key, 0) < REONLINEWAIT:
-  return False
- last[key] = stamp()
+ return last
+
+def reonlinelastput(last):
  try:
   with open(REONLINELAST, 'w') as f:
    for k, v in last.items():
     f.write(k+' '+str(v)+'\n')
  except Exception:
   pass
+
+def reonlineleg(raid, disk):
+ # True when the leg is in use again (online, resilvering): nothing else to do for it in this pass
+ if not iscontainer():
+  return False
+ name = str(disk.get('name',''))
+ status = str(disk.get('status',''))
+ if not any(x in status for x in LEGDEAD):
+  return False
+ legname = name            # the name ZFS knows the leg by (zpool online / status)
+ # r10i (validator F1 note): the 2-minute limit per leg is checked BEFORE any command (zpool status, lsscsi), and a guid leg
+ # whose disk is not back is probed at most every REONLINEPROBE s (its node may stay away for hours: QX-776)
+ last = reonlinelast()
+ key = str(raid.get('pool',''))+'/'+legname
+ if stamp() - last.get(key, 0) < REONLINEWAIT:
+  return False
+ if GUIDRE.match(name):
+  # r10i (F1): listed by guid -> its disk from the 'was' path; host '_1' is normal here, lsscsi is asked directly
+  pkey = key+'#probe'
+  if stamp() - last.get(pkey, 0) < REONLINEPROBE:
+   return False
+  name = wasdisk(raid.get('pool',''), legname)
+  if not name or not lsscsilists(name):
+   last[pkey] = stamp()
+   reonlinelastput(last)
+   return False            # no by-id 'was' path (the spare path decides, unchanged) or its node is not back
+ elif 'scsi' not in name:
+  return False
+ elif str(disk.get('host','_1')) in ('_1', 'UNAVAIL', '', 'None'):
+  return False            # lsscsi does not list the disk: its node is not back
+ if not devicerunning(name):
+  return False
+ last.pop(key+'#probe', None)
+ last[key] = stamp()
+ reonlinelastput(last)
  res = subprocess.run(['timeout','60','/sbin/zpool','online',raid['pool'],legname],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  now = legstate(raid['pool'], [legname, name])
  ok = res.returncode == 0 and now != '' and not any(x in now for x in LEGNOTINUSE)
