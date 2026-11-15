@@ -64,7 +64,7 @@ def getpoolstoimport():
  # 'pool:' header of the same 'zpool import' output and is not digits only (a leg listed by its guid with the pool name in its
  # old /tmp/impdir path was taken for a pool: 'zpool list <guid> -H' never returns, and a pool named by the guid was listed);
  # 'zpool list' gets a 30 s timeout.  Physical flavour: unchanged.
- iscont = os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')
+ iscont = os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')   # r10k (G7): as flavor.sh
  headpools = set(w[1] for w in (x.split() for x in sty) if len(w) >= 2 and w[0] == 'pool:')
  for a in sty:
   b=a.split()
@@ -80,7 +80,9 @@ def getpoolstoimport():
   if 'id:' in str(b):
     poolid = b[1] 
   if iscont:
-   poolline = len(b) > 0 and zname in headpools and not zname.isdigit()
+   # r10k (validator 10j G4): and a TopStor pool name (pdhcp...), as the old test and putzpool's 'mine' list: an exported
+   # pool of another cluster or a non-TopStor pool of the shared kernel was listed and got 'zpool set cachefile' here
+   poolline = len(b) > 0 and zname in headpools and not zname.isdigit() and zname.startswith('pdhcp')
   else:
    poolline = "pdhcp" in str(b) and  'pool' not in str(b)
   if poolline:

@@ -8,7 +8,7 @@ from etcddel import etcddel as dels
 from poolstoimport import getpoolstoimport, initgetpoolstoimport
 from allphysicalinfo import getall 
 from time import time as stamp
-from time import sleep
+from time import sleep, strftime, localtime
 from ast import literal_eval as mtuple
 
 
@@ -293,6 +293,199 @@ def iscontainer():
  # physical path stays as it was (CLAUDE.md hard rule 1).  The same test as flavor.sh.
  return os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')
 
+# r10k (validator 10j G1, HIGH): the survivor already holds poolnxt/<pool> when the owner stops.  The owner exports its pool
+# (cstop.sh, stopnode.sh) and only THEN logs out / takes its iSCSI target away; in that window the survivor imports the
+# pool as soon as the cluster pools list drops it (+5 s in proof 10i x3).  A pool whose members are ALL served by the
+# leaving node's target was imported on disks that vanished a moment later: both legs lost, SUSPENDED (host hang risk).
+# The broken /tmp impdir of round 10i hid this (those imports always failed); the r10j by-id options make them work.
+# Now (container flavour) the import waits while the pool cannot run without the member disks served by ANOTHER node's
+# target (every present member, or a raidz / mirror that would lose too many of them: the vdev tree of a list-only
+# 'zpool import' of the members) and that node is still ready (at most HOLDMAX s), its session is not LOGGED_IN (the
+# disks are going away), or it left 'ready' less than HOLDMIN s ago with its target still up.  A pool with enough members
+# elsewhere (PX: a mirror with a leg on this node, PR3: a raidz1 with one leg on the leaving node) is imported at once.
+# The node that serves a disk is the host in its iSCSI target name (iqn.2016-03.com.<host>:t1, caddtargetdisks.sh), read
+# from sysfs only (nothing that can hang).  The hold is logged as the pool's decision; poolnxt stays, the next round retries.
+SYSBLOCK = '/sys/class/block/'
+ISCSISESS = '/sys/class/iscsi_session/'
+HOLDF = '/root/zpooltoimport.hold'
+HOLDMAX = 120
+HOLDMIN = 30
+def targetof(dev):
+ # (host, session state) of the iSCSI target that serves <dev>; ('', '') when it is no iSCSI disk or cannot be told
+ import re
+ try:
+  blk = os.path.basename(os.path.realpath(dev))
+  m = re.search(r'/(session[0-9]+)/', os.path.realpath(SYSBLOCK+blk)+'/')
+  if not m:
+   return ('', '')
+  with open(ISCSISESS+m.group(1)+'/targetname') as f:
+   tn = f.read().strip()
+  try:
+   with open(ISCSISESS+m.group(1)+'/state') as f:
+    st = f.read().strip()
+  except OSError:
+   st = ''
+  h = re.match(r'^iqn\.[0-9]{4}-[0-9]{2}\.[^.:]+\.([^:]+):', tn)
+  return (h.group(1) if h else '', st)
+ except Exception:
+  return ('', '')
+
+def vdevtree(out, pool, poolid=''):
+ # the top-level vdevs of <pool> in a 'zpool import' listing: [{'name','section','state','leaves':[(name, state)]}]
+ # (the block whose id is <poolid>, else the only block named <pool>); None when it is not listed or not one
+ blocks = []
+ cur = None
+ for line in out.split('\n'):
+  w = line.split()
+  if len(w) >= 2 and w[0] == 'pool:':
+   cur = {'name': w[1], 'id': '', 'config': False, 'base': None, 'section': 'data', 'tops': []}
+   blocks.append(cur)
+   continue
+  if cur is None or not w:
+   continue
+  if w[0] == 'id:' and len(w) >= 2 and not cur['config']:
+   cur['id'] = w[1]
+   continue
+  if w[0] == 'config:':
+   cur['config'] = True
+   continue
+  if not cur['config'] or w[0] in ('NAME', 'errors:') or line.endswith(':'):
+   continue
+  ind = len(line.expandtabs(8)) - len(line.expandtabs(8).lstrip())
+  st = w[1] if len(w) > 1 else ''
+  if cur['base'] is None:
+   cur['base'] = ind                      # the pool line
+   continue
+  if ind <= cur['base']:
+   cur['section'] = w[0]                  # logs / cache / spares / special / dedup
+   continue
+  if ind == cur['base'] + 2 or not cur['tops']:
+   cur['tops'].append({'name': w[0], 'section': cur['section'], 'state': st, 'leaves': []})
+  elif ind == cur['base'] + 4:
+   cur['tops'][-1]['leaves'].append((w[0], st))     # direct children only (a nested replacing / spare counts by its state)
+ named = [b for b in blocks if b['name'] == pool]
+ for b in named:
+  if poolid and b['id'] == str(poolid):
+   return b['tops']
+ return named[0]['tops'] if len(named) == 1 else None
+
+def survives(tops, lost):
+ # True when every top-level data vdev keeps running without the disks in <lost> (base names) and the ones already missing
+ import re
+ def base(n):
+  return re.sub(r'-part[0-9]+$', '', str(n).replace(BYID, ''))
+ gone = lambda n, st: base(n) in lost or str(n).isdigit() or st not in ('ONLINE', 'DEGRADED', '')
+ for t in tops:
+  if t['section'] in ('cache', 'spares', 'logs'):
+   continue
+  leaves = t['leaves'] or [(t['name'], t['state'])]
+  g = sum(1 for n, st in leaves if gone(n, st))
+  if t['name'].startswith(('mirror', 'replacing', 'spare')) and t['leaves']:
+   ok = g < len(leaves)
+  elif t['name'].startswith(('raidz', 'draid')):
+   m = re.match(r'^(?:raidz|draid)([0-9]?)', t['name'])
+   ok = g <= int(m.group(1) or '1')
+  else:
+   ok = g == 0
+  if not ok:
+   return False
+ return True
+
+def holdstate():
+ import json
+ try:
+  with open(HOLDF) as f:
+   d = json.load(f)
+  return d if isinstance(d, dict) else {}
+ except Exception:
+  return {}
+
+def holdsave(d):
+ import json
+ try:
+  tmp = HOLDF+'.'+str(os.getpid())
+  with open(tmp, 'w') as f:
+   json.dump(d, f)
+  os.replace(tmp, HOLDF)
+ except Exception:
+  pass
+
+def holdsince(pool, host):
+ # the time the hold of <pool> for <host> began (kept in HOLDF across the passes; a new host starts a new hold)
+ d = holdstate()
+ e = d.get(pool, {})
+ now = stamp()
+ if isinstance(e, dict) and e.get('host') == host:
+  try:
+   return float(e.get('first', now))
+  except Exception:
+   pass
+ d = {p: v for p, v in d.items() if isinstance(v, dict) and now - float(v.get('first', 0) or 0) < 86400}
+ d[pool] = {'host': host, 'first': now}
+ holdsave(d)
+ return now
+
+def holdclear(pool):
+ d = holdstate()
+ if d.pop(pool, None) is not None:
+  holdsave(d)
+
+def leavehold(pool, devs, poolid=''):
+ # ('' or the reason to wait, a note for the log when a hold ends): see the r10k comment above
+ import re
+ byhost = {}
+ for d in devs:
+  h, st = targetof(d)
+  if h and h != myhost:
+   byhost.setdefault(h, []).append((d, st))
+ for h in sorted(byhost):
+  hd = byhost[h]
+  lost = set(re.sub(r'-part[0-9]+$', '', d.replace(BYID, '')) for d, st in hd)
+  if len(hd) == len(devs):
+   need = 'every present member disk ('+str(len(hd))+') is on '+h+"'s target"
+  else:
+   out = ''
+   try:
+    out = subprocess.run(['timeout','60','/usr/sbin/zpool','import']+[x for d in devs for x in ('-d', d)],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode('utf-8','replace')
+   except Exception:
+    pass
+   tops = vdevtree(out, pool, poolid if str(poolid).isdigit() else '')
+   if tops is None or survives(tops, lost):
+    continue
+   need = str(len(hd))+' of '+str(len(devs))+' member disks are on '+h+"'s target and "+pool+' cannot run without them'
+  first = holdsince(pool, h)
+  age = int(stamp() - first)
+  since = 'held since '+strftime('%H:%M:%S', localtime(first))
+  bad = sorted(set(st or 'unknown' for d, st in hd if st != 'LOGGED_IN'))
+  if bad:
+   return 'skipped: '+need+', its iSCSI session is '+'/'.join(bad)+' (the disks are going away); '+since, ''
+  ready = ('ready/'+h) in str(get(leaderip, 'ready', '--prefix'))
+  if ready and age < HOLDMAX:
+   return 'skipped: '+need+' and '+h+' is still ready (leaving: its target goes after the export); '+since+' (at most '+str(HOLDMAX)+' s)', ''
+  if not ready and age < HOLDMIN:
+   return 'skipped: '+need+'; '+h+' is not ready, its target still answers; '+since+' ('+str(HOLDMIN)+' s)', ''
+  return '', 'hold ended after '+str(age)+' s: '+need+', '+h+(' is still ready' if ready else ' is not ready')+', its session LOGGED_IN: imported as before'
+ holdclear(pool)
+ return '', ''
+
+def droplonekeys():
+ # r10k (validator 10j G6): a pools/<digits> key (a vdev guid that the round 10i putzpool wrote as a pool) with no
+ # poolnxt/<digits> is skipped by selectimport.py and the leader loop for ever but never deleted (only the node named by a
+ # poolnxt/<digits> drops both).  The leader deletes such keys (and a lone poolnxt/<digits>) every pass.  A pool name never
+ # is digits only (ZFS needs a leading letter); 'pools/dgsinfo' and the like are not touched.
+ for prefix in ('pools/', 'poolnxt/'):
+  try:
+   keys = get(leaderip, prefix, '--prefix')
+  except Exception:
+   continue
+  for kv in keys if isinstance(keys, list) else []:
+   k = str(kv[0]) if isinstance(kv, (list, tuple)) and kv else ''
+   name = k[len(prefix):] if k.startswith(prefix) else ''
+   if name.isdigit():
+    dels(leaderip, prefix+name)
+    decision('leader:'+name, 'dropped: '+prefix+name+' (a vdev guid, not a pool name)')
+
 def importscan(impdir):
  # r10h (finding 3): the pools 'zpool import -d <impdir>' lists, as [{'name','id','state','members'}]
  # r10j (R1): <impdir> is the import arguments of the pass (container: '-d <device>' per member) or an import dir
@@ -572,6 +765,15 @@ def _zpooltoimport(*args):
    # detached while its node was away (old guid, free disk now) can never be imported as the pool and then be re-attached over.
    # r10j (R1): container flavour: '-d /dev/disk/by-id/<disk>-part1' per member, never a /tmp dir (see memberdevs)
    impargs = importargs(pool, getall(leaderip)['disks'])
+   if iscontainer():
+    # r10k (validator 10j G1): never import onto disks that a leaving node's target still serves and the pool cannot lose
+    why, note = leavehold(pool, impargs[1::2] if impargs[:1] == ['-d'] else [], poolid)
+    if why:
+     print('import of', pool, 'held:', why)
+     decision(pool, why)
+     continue
+    if note:
+     decision(pool, note)
    cmdline = ' '.join(['/usr/sbin/zpool','import'] + impargs + [poolid])
    # poolnxt/<pool> is the only trigger of this import: it is deleted only after the import worked (below).  It used to be deleted here,
    # before the import, so one failed first try (the disk session of the survivor was not up yet after a take over) orphaned the pool for ever.
@@ -603,6 +805,8 @@ def _zpooltoimport(*args):
    if pool in result and poolonline(pool):
     decision(pool, 'imported')
     forgetdecision(pool)
+    if iscontainer():
+     holdclear(pool)                      # r10k (G1)
     dels(leaderip, 'poolnxt', pool )      # imported: the assignment is done
     # The pool is imported by its id (ActPool/<pool>), and a new id is given right after the import, so the next import
     # (by the id every node knows) finds only the devices that took part in THIS import: a disk that was away meanwhile
@@ -661,6 +865,8 @@ def _zpooltoimport(*args):
 
  readies=get(etcdip,'ready','--prefix')
  hosts=get(leaderip,'host','/current')
+ if iscontainer():
+  droplonekeys()                          # r10k (validator 10j G6)
  
  #pools = [poolinfo[0].split('/')[1]+'_'+poolinfo[1] for poolinfo in pools ]
  activepools = get(leaderip, 'ActPool','--prefix')

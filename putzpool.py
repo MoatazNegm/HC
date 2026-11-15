@@ -34,6 +34,7 @@ def capacitywarn(pool, limit=90, every=7200):
 
 SKIPLOG = '/root/putzpool.skipped'
 LISTLOG = '/root/putzpool.listtimeout'
+LISTCAP = 100000
 def statuspoolnames(sty):
  # r10j: the pools named by the 'pool:' header lines of a 'zpool status' output
  names = set()
@@ -61,7 +62,14 @@ def zpoollist(pool, limit=30):
   why = 'no answer in '+str(limit)+' s'
  except Exception as e:
   why = 'failed: '+str(e)[:100]
+ # r10k (validator 10j G5): at most one line a minute (putzpool runs every few seconds while a pool answers late) and the
+ # file is kept under LISTCAP bytes (the old lines go to LISTLOG.1).  The timeout helps when zpool waits for nothing (the R1
+ # 'interval' case); a zpool stuck in the kernel (state D, a SUSPENDED pool) is not killable and still blocks the wait.
  try:
+  if os.path.exists(LISTLOG) and time.time() - os.path.getmtime(LISTLOG) < 60:
+   return [pool, '0', '0', '0', '-', '-', '-', '-', '-', '-']
+  if os.path.exists(LISTLOG) and os.path.getsize(LISTLOG) > LISTCAP:
+   os.replace(LISTLOG, LISTLOG+'.1')
   with open(LISTLOG, 'a') as f:
    f.write(time.strftime('%Y-%m-%d %H:%M:%S')+' zpool list '+pool+' -H: '+why+' (r10j: placeholder sizes)\n')
  except Exception:
@@ -92,7 +100,7 @@ def putzpool():
  cmdline='/sbin/zpool status '
  # container flavour: every node sees every pool (one kernel).  A node reports only the pools it owns
  # (zfs property topstor:owner, /pace/cpoolowner.sh), as a physical node sees only the pools it imported.
- if os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10'):
+ if os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10'):   # r10k (G7)
   mine=subprocess.run(['/pace/cpoolowner.sh','mine',myhost],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode().split()
   cmdline = '/sbin/zpool status '+' '.join(mine) if len(mine) > 0 else '/bin/true'
  result=subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout
@@ -151,7 +159,7 @@ def putzpool():
  # hours (the API listed no pool and every disk free) and pools/<guid> was written to the leader etcd.  Container flavour:
  # a pool line is a line whose first word is a pool named by a 'pool:' header of the same output (never digits only), and
  # 'zpool list' has a 30 s timeout.  Physical flavour: unchanged.
- iscont = os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')
+ iscont = os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')   # r10k (G7): as flavor.sh
  statuspools = statuspoolnames(sty)
  skipped = []
  for a in sty:
