@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import subprocess, json,sys
+import os
 from os import listdir
 from logqueue import queuethis, initqueue
 from etcdput import etcdput as put
@@ -59,6 +60,12 @@ def getpoolstoimport():
  silvering = 'no'
  silveringflag = 'no'
  poolid = ''
+ # r10j (QC proof 10i R1): as in putzpool.py, container flavour: a pool line is a line whose first word is a pool named by a
+ # 'pool:' header of the same 'zpool import' output and is not digits only (a leg listed by its guid with the pool name in its
+ # old /tmp/impdir path was taken for a pool: 'zpool list <guid> -H' never returns, and a pool named by the guid was listed);
+ # 'zpool list' gets a 30 s timeout.  Physical flavour: unchanged.
+ iscont = os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')
+ headpools = set(w[1] for w in (x.split() for x in sty) if len(w) >= 2 and w[0] == 'pool:')
  for a in sty:
   b=a.split()
   print(',,,,,,,,,b:',b)
@@ -72,7 +79,11 @@ def getpoolstoimport():
       b[0]='scsi-'+lss.split()[6]
   if 'id:' in str(b):
     poolid = b[1] 
-  if "pdhcp" in str(b) and  'pool' not in str(b):
+  if iscont:
+   poolline = len(b) > 0 and zname in headpools and not zname.isdigit()
+  else:
+   poolline = "pdhcp" in str(b) and  'pool' not in str(b)
+  if poolline:
    raidlist=[]
    volumelist=[]
    zdict = {}
@@ -86,8 +97,11 @@ def getpoolstoimport():
    except:
     availtype='willchecklater'
    cmdline=['/sbin/zpool','list',b[0],'-H']
-   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
-   zlist=str(result.stdout)[2:][:-3].split('\\t')
+   try:
+    result=subprocess.run(cmdline,stdout=subprocess.PIPE,timeout=(30 if iscont else None))
+    zlist=str(result.stdout)[2:][:-3].split('\\t')
+   except subprocess.TimeoutExpired:
+    zlist=[b[0]]                      # r10j: not used below; never hang the import pass on it
    cmdline=['/sbin/zfs','get','compressratio','-H']
    result=subprocess.run(cmdline,stdout=subprocess.PIPE)
    zlist2=str(result.stdout)[2:][:-3].split('\\t')

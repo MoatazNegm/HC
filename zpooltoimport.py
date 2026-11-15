@@ -202,13 +202,9 @@ def remembermembers(disks):
   pass
 
 MEMBERSRC = {}
-def memberimportdir(pool, disks):
- # a directory of symlinks to the by-id devices (and their partitions) of the disks etcd lists in <pool>; '' when none is present
- import glob
- impdir = '/tmp/impdir-'+pool
- subprocess.run(['rm','-rf',impdir])
- os.makedirs(impdir, exist_ok=True)
- found = 0
+def importnames(pool, disks):
+ # the disk names to import <pool> from: the members the live map lists; container flavour: when it lists none, the
+ # members it listed last (r10i F2).  MEMBERSRC[pool] names the source for the decision line.
  names = membernames(pool, disks)
  MEMBERSRC[pool] = 'etcd'
  if not names and iscontainer():
@@ -219,6 +215,17 @@ def memberimportdir(pool, disks):
    MEMBERSRC[pool] = 'members as last listed '+str(int(stamp()-float(last.get('stamp', 0))))+' s ago' if names else 'none'
   except Exception:
    MEMBERSRC[pool] = 'members as last listed' if names else 'none'
+ return names
+
+def memberimportdir(pool, disks):
+ # a directory of symlinks to the by-id devices (and their partitions) of the disks etcd lists in <pool>; '' when none is present
+ # r10j (R1): used by the PHYSICAL flavour only (one mount namespace there); the container flavour uses memberdevs()
+ import glob
+ impdir = '/tmp/impdir-'+pool
+ subprocess.run(['rm','-rf',impdir])
+ os.makedirs(impdir, exist_ok=True)
+ found = 0
+ names = importnames(pool, disks)
  for dname in names:
     for dev in glob.glob('/dev/disk/by-id/'+dname+'*'):
      link = impdir+'/'+os.path.basename(dev)
@@ -229,6 +236,58 @@ def memberimportdir(pool, disks):
   return ''
  return impdir
 
+# r10j (QC proof 10i R1, 775.1 / 778.1 / 787.2): in the container flavour 'zpool import -d /tmp/impdir-<pool>' can never
+# import.  The vdev paths ZFS takes from the directory (/tmp/impdir-<pool>/<disk>-part1) are opened by the KERNEL, in the
+# host's mount namespace, which has /dev/disk/by-id/ (same kernel, host udev) but not the container's /tmp: every leg found
+# through the dir is UNAVAIL ('was /tmp/impdir-...').  After an owner's stop the survivor never imported (rc 1 for 22 min),
+# or imported a mirror half (its LOCAL leg UNAVAIL, only the stopping node's leg live) that SUSPENDED a moment later when
+# that node's target went away.  Now each member is passed as its own '-d /dev/disk/by-id/<disk>-part1' (the option can be
+# repeated; the scan still reads ONLY the member disks, so a stale detached leg of the same name is still never imported,
+# QSD5.304).  Container flavour only; the physical flavour keeps its /tmp/impdir (one namespace there).
+BYID = '/dev/disk/by-id/'
+def memberdevs(pool, disks):
+ # the by-id device of each member disk that carries the ZFS label: <disk>-part1 for a whole disk, the name itself for a
+ # partition name or when no -part1 link exists (yet); never the reserved -part9.  [] when no member device is present.
+ import re
+ devs = []
+ for dname in importnames(pool, disks):
+  dname = str(dname).replace(BYID, '')
+  if not dname or '/' in dname:
+   continue
+  cands = [BYID+dname] if re.search(r'-part[0-9]+$', dname) else [BYID+dname+'-part1', BYID+dname]
+  for c in cands:
+   if c.endswith('-part9'):
+    continue
+   if os.path.exists(c):
+    if c not in devs:
+     devs.append(c)
+    break
+ return devs
+
+def importargs(pool, disks):
+ # the '-d' options of the import of <pool>: container: one '-d <device>' per member device (memberdevs); physical: as
+ # before, '-d /tmp/impdir-<pool>' when a member is present.  [] = no member found: import by id with the default scan.
+ if iscontainer():
+  args = []
+  for d in memberdevs(pool, disks):
+   args += ['-d', d]
+  return args
+ impdir = memberimportdir(pool, disks)
+ return ['-d', impdir] if impdir else []
+
+def scanargs(impargs):
+ # importscan / importbyname take the import arguments of the pass (a list) or, as before r10j, an import dir (a string)
+ if isinstance(impargs, (list, tuple)):
+  return list(impargs)
+ return ['-d', impargs] if impargs else []
+
+def validpoolname(name):
+ # r10j (R1, putzpool): a ZFS pool name begins with a letter.  A name of digits only is a vdev guid that putzpool once
+ # took for a pool line ('<guid> UNAVAIL ... was /tmp/impdir-<pool>/...'): pools/<guid> and poolnxt/<guid> were written and
+ # both nodes ran 'zpool import <guid>' every 10 s.
+ import re
+ return bool(re.match(r'^[A-Za-z][A-Za-z0-9_.:-]*$', str(name)))
+
 def iscontainer():
  # r10h pass 2 (validator G8): the r10h changes of this file (findings 5 and 3) are for the container flavour only; the
  # physical path stays as it was (CLAUDE.md hard rule 1).  The same test as flavor.sh.
@@ -236,7 +295,8 @@ def iscontainer():
 
 def importscan(impdir):
  # r10h (finding 3): the pools 'zpool import -d <impdir>' lists, as [{'name','id','state','members'}]
- cmd = ['timeout','60','/usr/sbin/zpool','import'] + (['-d', impdir] if impdir else [])
+ # r10j (R1): <impdir> is the import arguments of the pass (container: '-d <device>' per member) or an import dir
+ cmd = ['timeout','60','/usr/sbin/zpool','import'] + scanargs(impdir)
  try:
   out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode('utf-8','replace')
  except Exception:
@@ -460,6 +520,13 @@ def _zpooltoimport(*args):
  else:
   for poolline in needtoimport:
    pool = poolline[0].replace('poolnxt/','')
+   if iscontainer() and not validpoolname(pool):
+    # r10j (R1, putzpool): a vdev guid taken for a pool (pools/<guid>, poolnxt/<guid>): never 'zpool import <guid>'
+    decision(pool, 'dropped: not a pool name (a vdev guid), poolnxt/'+pool+' and pools/'+pool+' removed')
+    forgetdecision(pool)
+    dels(leaderip, 'poolnxt/'+pool)
+    dels(leaderip, 'pools/'+pool)
+    continue
    if pool in str(pools):
     holder = [ str(v.get('host','?')) for v in pools if isinstance(v, dict) and v.get('name') == pool ]
     decision(pool, 'skipped: the cluster pools list still has it (host '+(','.join(holder) or 'substring match')+')')
@@ -503,15 +570,14 @@ def _zpooltoimport(*args):
     poolid = pool
    # Import only from the disks that are members of this pool (etcd), so a stale leg that kept the pool's name but was
    # detached while its node was away (old guid, free disk now) can never be imported as the pool and then be re-attached over.
-   cmdline= '/usr/sbin/zpool import '+poolid
-   impdir = memberimportdir(pool, getall(leaderip)['disks'])
-   if impdir:
-    cmdline= '/usr/sbin/zpool import -d '+impdir+' '+poolid
+   # r10j (R1): container flavour: '-d /dev/disk/by-id/<disk>-part1' per member, never a /tmp dir (see memberdevs)
+   impargs = importargs(pool, getall(leaderip)['disks'])
+   cmdline = ' '.join(['/usr/sbin/zpool','import'] + impargs + [poolid])
    # poolnxt/<pool> is the only trigger of this import: it is deleted only after the import worked (below).  It used to be deleted here,
    # before the import, so one failed first try (the disk session of the survivor was not up yet after a take over) orphaned the pool for ever.
    print(cmdline)
    src = MEMBERSRC.get(pool, 'etcd')
-   decision(pool, 'importing: '+cmdline+('' if src == 'etcd' or not impdir else ' ('+src+')'))
+   decision(pool, 'importing: '+cmdline+('' if src == 'etcd' or not impargs else ' ('+src+')'))
    put(leaderip, 'pools/'+pool,myhost)
    failnote = ''
    if not iscontainer():
@@ -521,11 +587,11 @@ def _zpooltoimport(*args):
    if res.returncode != 0 and iscontainer():
     # r10h (finding 3): why the import failed was thrown away ("import failed (rc 1)" 84 times, nothing else)
     failnote = ': '+res.stderr.decode('utf-8','replace').strip().replace('\n',' | ')[:300]
-    alt, why = importbyname(pool, poolid, impdir)
+    alt, why = importbyname(pool, poolid, impargs)
     failnote += '; '+why
     if alt:
      decision(pool, 'import of '+str(poolid)+' failed (rc '+str(res.returncode)+')'+failnote)
-     cmdline = '/usr/sbin/zpool import -d '+impdir+' '+alt
+     cmdline = ' '.join(['/usr/sbin/zpool','import'] + scanargs(impargs) + [alt])
      res = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
      if res.returncode != 0:
       failnote += '; import of '+alt+' failed too: '+res.stderr.decode('utf-8','replace').strip().replace('\n',' | ')[:300]
@@ -620,6 +686,8 @@ def _zpooltoimport(*args):
     pool = poolinfo['name']
     if 'pree' in pool:
      continue
+    if iscontainer() and not validpoolname(pool):
+     continue      # r10j (R1, putzpool): a vdev guid is never a pool to assign
     # QSD5.352 (QC 684): an imported pool is always re-checked; poolnxt naming this leader (written while it was alone)
     # kept the pool in needtoimport and was never moved to the node that came back
     if pool not in str(needtoimport) or (pool in importedpools and len(readies) > 1):

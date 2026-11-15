@@ -32,6 +32,56 @@ def capacitywarn(pool, limit=90, every=7200):
   print('capacitywarn',pool,e)
 
 
+SKIPLOG = '/root/putzpool.skipped'
+LISTLOG = '/root/putzpool.listtimeout'
+def statuspoolnames(sty):
+ # r10j: the pools named by the 'pool:' header lines of a 'zpool status' output
+ names = set()
+ for a in sty:
+  w = a.split()
+  if len(w) >= 2 and w[0] == 'pool:':
+   names.add(w[1])
+ return names
+
+def ispoolline(first, statuspools):
+ # r10j: a 'zpool status' line is a pool line only when its first word is a pool of the output and not digits (a guid)
+ return bool(first) and first in statuspools and not str(first).isdigit()
+
+def zpoollist(pool, limit=30):
+ # r10j: 'zpool list <pool> -H' split into its fields, with a time limit; on no answer (or a short answer) placeholder
+ # fields so the pool is still reported (its line, its disks) and the cycle goes on.  Logged in LISTLOG.
+ why = ''
+ try:
+  result = subprocess.run(['/sbin/zpool','list',pool,'-H'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=limit)
+  zlist = str(result.stdout)[2:][:-3].split('\\t')
+  if len(zlist) >= 8:
+   return zlist
+  why = 'short answer (rc '+str(result.returncode)+')'
+ except subprocess.TimeoutExpired:
+  why = 'no answer in '+str(limit)+' s'
+ except Exception as e:
+  why = 'failed: '+str(e)[:100]
+ try:
+  with open(LISTLOG, 'a') as f:
+   f.write(time.strftime('%Y-%m-%d %H:%M:%S')+' zpool list '+pool+' -H: '+why+' (r10j: placeholder sizes)\n')
+ except Exception:
+  pass
+ return [pool, '0', '0', '0', '-', '-', '-', '-', '-', '-']
+
+def logskipped(skipped):
+ # r10j: the 'pdhc' lines that are not pool lines (the old test took them for pools), at most once a minute
+ if not skipped:
+  return
+ try:
+  if os.path.exists(SKIPLOG) and time.time() - os.path.getmtime(SKIPLOG) < 60:
+   return
+  with open(SKIPLOG, 'w') as f:
+   f.write(time.strftime('%Y-%m-%d %H:%M:%S')+' not a pool line (r10j), kept as a disk line:\n')
+   for line in skipped[:20]:
+    f.write('  '+line[:200]+'\n')
+ except Exception:
+  pass
+
 def putzpool():
  global leader, leaderip, myhost, myip
  sitechange=0
@@ -95,6 +145,15 @@ def putzpool():
  lists={'pools':lpools,'disks':ldisks,'defdisks':ldefdisks,'inusedisks':linusedisks,'freedisks':lfreedisks,'cachedisks':lcachedisks,'sparedisks':lsparedisks,'raids':lraids,'volumes':lvolumes,'snapshots':lsnapshots, 'hosts':list(lhosts), 'phosts':list(phosts)}
  silvering = 'no'
  silveringflag = 'no'
+ # r10j (QC proof 10i R1): any 'zpool status' line with 'pdhc' in it was taken for a pool line.  A leg that ZFS lists by
+ # its guid with the pool name in its old path ('6171136348414397648 UNAVAIL ... was /tmp/impdir-pdhcp.../...') then ran
+ # 'zpool list 6171136348414397648 -H', and zpool reads a number as the INTERVAL: it never returned, putzpool hung for
+ # hours (the API listed no pool and every disk free) and pools/<guid> was written to the leader etcd.  Container flavour:
+ # a pool line is a line whose first word is a pool named by a 'pool:' header of the same output (never digits only), and
+ # 'zpool list' has a 30 s timeout.  Physical flavour: unchanged.
+ iscont = os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')
+ statuspools = statuspoolnames(sty)
+ skipped = []
  for a in sty:
   b=a.split()
   if len(b) > 0:
@@ -106,7 +165,13 @@ def putzpool():
      if any('/dev/'+b[0] in lss for drive in drives):
       b[0]='scsi-'+lss.split()[6]
    
-  if "pdhc" in str(b) and  'pool' not in str(b):
+  if iscont:
+   poolline = len(b) > 0 and ispoolline(zname, statuspools)
+   if not poolline and "pdhc" in str(b) and 'pool' not in str(b):
+    skipped.append(' '.join(a.split()))
+  else:
+   poolline = "pdhc" in str(b) and  'pool' not in str(b)
+  if poolline:
    raidlist=[]
    volumelist=[]
    zdict={}
@@ -120,8 +185,11 @@ def putzpool():
    except:
     availtype='suspended'
    cmdline=['/sbin/zpool','list',b[0],'-H']
-   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
-   zlist=str(result.stdout)[2:][:-3].split('\\t')
+   if iscont:
+    zlist = zpoollist(b[0])          # r10j: a timeout, placeholder sizes when zpool does not answer
+   else:
+    result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+    zlist=str(result.stdout)[2:][:-3].split('\\t')
    cmdline=['/sbin/zfs','get','compressratio','-H']
    result=subprocess.run(cmdline,stdout=subprocess.PIPE)
    zlist2=str(result.stdout)[2:][:-3].split('\\t')
@@ -294,6 +362,8 @@ def putzpool():
     disklist.append(ddict)
     ldisks.append(ddict)
 
+ if iscont:
+  logskipped(skipped)
  try:
     cache_config_raw = get(myip, 'cachespares')
     print(f"DEBUG: Cache raw value: {cache_config_raw}")
