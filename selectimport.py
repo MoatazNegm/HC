@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import sys
+import sys, os, re
 from etcdgetpy import etcdget as get
 from logqueue import queuethis
 from etcdput import etcdput as put 
@@ -56,6 +56,11 @@ def selectimport(*args):
         if myhost not in poolpair[1]:
             continue
         pool=poolpair[0].split('/')[1]
+        # r10j (QC proof 10i R1): a pools/<name> key whose name is not a ZFS pool name (a vdev guid that the round 10i putzpool
+        # wrote as pools/<guid>) is never given a poolnxt/ assignment (it made both nodes run 'zpool import <guid>' every 10 s).
+        # Container flavour only (the flavor.sh test); the physical path is unchanged.
+        if (os.path.exists('/.dockerenv') or os.path.isdir('/sys/class/net/eth10')) and not re.match(r'^[A-Za-z][A-Za-z0-9_.:-]*$', pool):
+            continue
         chost=poolpair[1]
         nhost=str(get(etcdip, 'poolnxt/'+pool)[0])
         if nhost in knowns and chost not in nhost:
