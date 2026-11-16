@@ -548,7 +548,20 @@ def reonlineleg(raid, disk):
  last.pop(key+'#probe', None)
  last[key] = stamp()
  reonlinelastput(last)
- res = subprocess.run(['timeout','60','/sbin/zpool','online',raid['pool'],legname],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ # r10m (QC proof 10l N1: 774.3, 775.3, 778.3, 724.3, 6+ sightings): 'zpool online <pool> <guid>' never worked here: the
+ # pools are made with autoexpand=on and their legs are whole disks, so libzfs relabels the disk before the online and
+ # resolves the NAME it was given as a disk name: a guid is no disk -> 'cannot online <guid>: no such device in pool'
+ # every 2 min, the pool healed only by a spare replace (two full resilvers).  A guid leg is now put back by the disk name
+ # of its 'was' path (scsi-<wwid>: libzfs matches it against the leg's stored path, as for a REMOVED leg, which works);
+ # only when ZFS does not know that name either is the guid tried as before.
+ target = name if GUIDRE.match(legname) and name and name != legname else legname
+ res = subprocess.run(['timeout','60','/sbin/zpool','online',raid['pool'],target],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ if res.returncode != 0 and target != legname and 'no such device' in res.stderr.decode('utf-8','replace'):
+  first = res.stderr.decode('utf-8','replace').strip()[:120]
+  res = subprocess.run(['timeout','60','/sbin/zpool','online',raid['pool'],legname],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+  if res.returncode != 0:
+   import types
+   res = types.SimpleNamespace(returncode=res.returncode, stdout=res.stdout, stderr=('by name: '+first+'; by guid: ').encode()+res.stderr)
  now = legstate(raid['pool'], [legname, name])
  ok = res.returncode == 0 and now != '' and not any(x in now for x in LEGNOTINUSE)
  leg = name if legname == name else legname+' (guid, was '+name+')'
