@@ -17,11 +17,17 @@
 mkdir -p /dev/disk/by-id
 want=""
 node() {	# node <name> <sysfs dir>: make /dev/<name> when it is missing
-	if [ ! -b /dev/$1 ] && [ -r $2/dev ]
+	# r10n (validator 10m V-13): a node left from an earlier disk of the same name with OTHER numbers (the disk went and
+	# another one got its name) is made again; it used to be kept, and zpooltoimport may use a /dev node as a device.
+	[ -r $2/dev ] || return 0
+	mm=`cat $2/dev`
+	ma=`echo $mm | cut -d: -f1`; mi=`echo $mm | cut -d: -f2`
+	if [ -b /dev/$1 ]
 	then
-		mm=`cat $2/dev`
-		mknod /dev/$1 b `echo $mm | cut -d: -f1` `echo $mm | cut -d: -f2` 2>/dev/null && chmod 660 /dev/$1
+		[ "`stat -c '%t:%T' /dev/$1 2>/dev/null`" = "`printf '%x:%x' $ma $mi`" ] && return 0
+		rm -f /dev/$1
 	fi
+	mknod /dev/$1 b $ma $mi 2>/dev/null && chmod 660 /dev/$1
 }
 for d in /sys/block/sd*
 do

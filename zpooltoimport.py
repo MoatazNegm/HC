@@ -245,24 +245,74 @@ def memberimportdir(pool, disks):
 # repeated; the scan still reads ONLY the member disks, so a stale detached leg of the same name is still never imported,
 # QSD5.304).  Container flavour only; the physical flavour keeps its /tmp/impdir (one namespace there).
 BYID = '/dev/disk/by-id/'
-def memberdevs(pool, disks):
- # the by-id device of each member disk that carries the ZFS label: <disk>-part1 for a whole disk, the name itself for a
- # partition name or when no -part1 link exists (yet); never the reserved -part9.  [] when no member device is present.
+def namedev(dname):
+ # the by-id device of a member disk name that carries the ZFS label: <disk>-part1 for a whole disk, the name itself for a
+ # partition name or when no -part1 link exists (yet); never the reserved -part9.  '' when none exists.
  import re
+ dname = str(dname).replace(BYID, '')
+ if not dname or '/' in dname:
+  return ''
+ cands = [BYID+dname] if re.search(r'-part[0-9]+$', dname) else [BYID+dname+'-part1', BYID+dname]
+ for c in cands:
+  if c.endswith('-part9'):
+   continue
+  if os.path.exists(c):
+   return c
+ return ''
+
+def memberdevs(pool, disks):
+ # the device (namedev) of each member disk name; [] when no member device is present
  devs = []
  for dname in importnames(pool, disks):
-  dname = str(dname).replace(BYID, '')
-  if not dname or '/' in dname:
-   continue
-  cands = [BYID+dname] if re.search(r'-part[0-9]+$', dname) else [BYID+dname+'-part1', BYID+dname]
-  for c in cands:
-   if c.endswith('-part9'):
-    continue
-   if os.path.exists(c):
-    if c not in devs:
-     devs.append(c)
-    break
+  c = namedev(dname)
+  if c and c not in devs:
+   devs.append(c)
  return devs
+
+# r10n (validator 10m V-1, MEDIUM): round 10m took the devices of a list-only scan only when NO member device was found by
+# name.  When only SOME member links are missing (the same "links gone for a moment" cause that emptied P1's list in r561
+# can empty part of a list) the import used the subset: a mirror of a local leg with a late link (L1) and a leg on the
+# leaving node (R1) was held on R1 alone ("every present member disk (1) is on <host>'s target") and then imported with
+# '-d R1' only, a mirror half on disks about to vanish.  Now a member disk counts as found only when one of ITS names has a
+# device; when any member disk is missing, the scan's devices of the same pool block are added (union) before the hold.
+def membergroups(pool, disks):
+ # the member disks of <pool>, each as the list of its names (actualdisk / zname / name); the remembered members (r10i F2,
+ # used when the live map lists none) are one name per disk
+ groups = []
+ for d in disks.values():
+  if not isinstance(d, dict) or d.get('pool') != pool:
+   continue
+  g = []
+  for key in ('actualdisk','zname','name'):
+   dname = str(d.get(key,'')).replace(BYID, '')
+   if dname and dname != '_1' and dname not in g:
+    g.append(dname)
+  if g:
+   groups.append(g)
+ if not groups and iscontainer():
+  groups = [[str(n)] for n in lastmembers().get(pool, {}).get('members', []) if str(n)]
+ return groups
+
+def missingmembers(pool, disks):
+ # the member disks of <pool> none of whose names has a device here (each as its first name)
+ return [g[0] for g in membergroups(pool, disks) if not any(namedev(n) for n in g)]
+
+# r10n (validator 10m V-4, MEDIUM): the container's /dev is a tmpfs; its by-id links are made only by /pace/cdiskids.sh
+# (sysfs only, cheap), which iscsiwatchdog.sh runs once per loop (minutes apart under load).  udev does not run in the
+# container.  A member link that is missing is first made from sysfs NOW, then the members are looked up again.
+CDISKIDS = '/pace/cdiskids.sh'
+def cdiskids():
+ try:
+  subprocess.run(['timeout','20',CDISKIDS], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+  return True
+ except Exception:
+  return False
+
+def samedev(a, b):
+ try:
+  return os.path.realpath(a) == os.path.realpath(b)
+ except Exception:
+  return a == b
 
 def importargs(pool, disks):
  # the '-d' options of the import of <pool>: container: one '-d <device>' per member device (memberdevs); physical: as
@@ -369,9 +419,18 @@ def vdevtree(out, pool, poolid=''):
    cur['section'] = w[0]                  # logs / cache / spares / special / dedup
    continue
   if ind == cur['base'] + 2 or not cur['tops']:
-   cur['tops'].append({'name': w[0], 'section': cur['section'], 'state': st, 'leaves': []})
-  elif ind == cur['base'] + 4:
-   cur['tops'][-1]['leaves'].append((w[0], st))     # direct children only (a nested replacing / spare counts by its state)
+   cur['tops'].append({'name': w[0], 'section': cur['section'], 'state': st, 'leaves': [], 'sub': []})
+  else:
+   if ind == cur['base'] + 4:
+    cur['tops'][-1]['leaves'].append((w[0], st))     # direct children only (a nested replacing / spare counts by its state)
+   cur['tops'][-1]['sub'].append((ind, w[0], st))    # r10n (V-10): every line below the top vdev, any depth
+ # r10n (validator 10m V-10): 'devs' = the leaf devices of each top vdev at ANY depth.  The children of a nested spare-N /
+ # replacing-N (an active hot spare, a running replace: base+6) were dropped, so the scan path judged and imported only
+ # part of the pool's devices.  A line is a leaf when the next line of the same top vdev is not deeper.
+ for b in blocks:
+  for t in b['tops']:
+   sub = t.pop('sub', [])
+   t['devs'] = [(n, s) for i, (ind, n, s) in enumerate(sub) if i + 1 >= len(sub) or sub[i + 1][0] <= ind] if sub else [(t['name'], t['state'])]
  named = [b for b in blocks if b['name'] == pool]
  for b in named:
   if poolid and b['id'] == str(poolid):
@@ -461,6 +520,18 @@ def holdclear(pool):
  if d.pop(pool, None) is not None:
   holdsave(d)
 
+def lostnames(dev):
+ # r10n (V-1 / V-13): the names a 'zpool import' listing may give the device <dev>: its by-id base name and, for a /dev
+ # node (a scan device without a by-id link) or the node a link points to, 'sdX1' and 'sdX' (round 10m matched the by-id
+ # form only: a leg passed as /dev/sdX1 was never counted as lost and a raidz that needed it was imported)
+ import re
+ names = set([re.sub(r'-part[0-9]+$', '', str(dev).replace(BYID, ''))])
+ for p in (str(dev), os.path.realpath(str(dev))):
+  if p.startswith('/dev/') and not p.startswith(BYID):
+   b = os.path.basename(p)
+   names |= set([b, re.sub(r'[0-9]+$', '', b)])
+ return names
+
 def leavehold(pool, devs, poolid=''):
  # ('' or the reason to wait, a note for the log when a hold ends): see the r10k comment above
  import re
@@ -472,7 +543,7 @@ def leavehold(pool, devs, poolid=''):
    byhost.setdefault(h, []).append((d, st))
  for h in sorted(byhost):
   hd = byhost[h]
-  lost = set(re.sub(r'-part[0-9]+$', '', d.replace(BYID, '')) for d, st in hd)
+  lost = set(x for d, st in hd for x in lostnames(d))
   if len(hd) == len(devs):
    need = 'every present member disk ('+str(len(hd))+') is on '+h+"'s target"
   else:
@@ -507,8 +578,9 @@ def leavehold(pool, devs, poolid=''):
 # r10m (QC proof 10l N7, CRITICAL): in r561 zfs2 imported P1 at 17:07:08 by 'zpool import <id>' -- no '-d', no hold --
 # 4 s after stopnode had exported it on zfs1, while every member sat on zfs1's target; when zfs1's container went away
 # the session failed and P1 was SUSPENDED (17:10:10).  memberdevs() found no device for P1's member names in that second
-# (the export makes udev re-read the disks; under load the by-id -part1 links are gone for a while, cf. N5), so the
-# import ran with the default scan, which found the disks under /dev, and leavehold() got an empty device list (nothing
+# (r10n, validator V-15: the cause is not proven -- the by-id links were missing or the names were not resolvable; the
+# container has no udev, its links come from cdiskids.sh only), so the import ran with the default scan, which found
+# the disks under /dev, and leavehold() got an empty device list (nothing
 # to judge: no hold).  Container flavour now: when no member device is found by name, a list-only 'zpool import' (default
 # scan) gives the devices of the pool's block (its id, else the only block of its name); leavehold() judges THOSE and
 # the import uses '-d <device>' for each of them.  The import never runs without knowing its devices: a pool the scan
@@ -529,7 +601,7 @@ def scandevs(pool, poolid=''):
  for t in tops:
   if t['section'] in SCANSECTIONS:
    continue
-  for n, st in (t['leaves'] or [(t['name'], t['state'])]):
+  for n, st in t.get('devs') or t['leaves'] or [(t['name'], t['state'])]:     # r10n (V-10): nested leaves too
    if str(n).isdigit() or st not in ('ONLINE', 'DEGRADED', ''):
     continue                              # a leg that is missing (guid) or not usable is not a device of this import
    d = devpath(n)
@@ -623,6 +695,82 @@ def missprune(seen):
  if len(k) != len(d):
   misssave(k)
 
+def jstate(path):
+ import json
+ try:
+  with open(path) as f:
+   d = json.load(f)
+  return d if isinstance(d, dict) else {}
+ except Exception:
+  return {}
+
+def jsave(path, d):
+ import json
+ try:
+  tmp = path+'.'+str(os.getpid())
+  with open(tmp, 'w') as f:
+   json.dump(d, f)
+  os.replace(tmp, path)
+ except Exception:
+  pass
+
+# r10n (validator 10m V-13, INFO): a scan device with no by-id link is used as its /dev node (/dev/sdX1).  A pool imported
+# that way records 'was /dev/sdX1' for a later lost leg (selectspare's online-by-name needs a by-id 'was', N1), and the /dev
+# node is one cdiskids.sh made.  cdiskids.sh has just run (V-4), so a missing link is rare: the pass then waits ONE pass
+# (>= DEVWAITMIN s) for the link; if it is still missing, the /dev node is used.  State /root/zpooltoimport.devwait.
+DEVWAITF = '/root/zpooltoimport.devwait'
+DEVWAITMIN = 5
+DEVWAITMAX = 600
+DEVSEEN = set()
+def devwaited(pool, now=None):
+ # True when this pool already waited one pass for its by-id links (the /dev nodes may be used now)
+ DEVSEEN.add(pool)
+ d = jstate(DEVWAITF)
+ now = stamp() if now is None else now
+ try:
+  t = float(d.get(pool))
+ except Exception:
+  t = None
+ if t is not None and DEVWAITMIN <= now - t <= DEVWAITMAX:
+  return True
+ if t is None or now - t > DEVWAITMAX or now < t:
+  d[pool] = now
+  jsave(DEVWAITF, d)
+ return False
+
+def devwaitprune(seen):
+ d = jstate(DEVWAITF)
+ k = {p: v for p, v in d.items() if p in seen}
+ if len(k) != len(d):
+  jsave(DEVWAITF, k)
+
+# r10n (validator 10m V-12, INFO): a marker that putmarker() put on the OTHER address (the one this node did not answer on
+# when it put it) was worked off only if that address became this node's etcdip later.  Such puts are kept in
+# /root/poouids.other ({pool: [addresses]}) and the retry loop reads those addresses too (only for these pools: no extra
+# etcd call in a normal pass); the entry goes when the marker is deleted.
+OTHERF = '/root/poouids.other'
+def othermarkers():
+ # [(pool, ip)] of markers put on another address than this pass's etcdip
+ res = []
+ for pool, ips in jstate(OTHERF).items():
+  for ip in ips if isinstance(ips, list) else []:
+   if ip != etcdip:
+    res.append((pool, ip))
+ return res
+
+def otherforget(pool):
+ d = jstate(OTHERF)
+ if d.pop(pool, None) is not None:
+  jsave(OTHERF, d)
+
+def delmarker(pool):
+ # the marker of <pool> deleted on etcdip and on every other address it was put on
+ dels(etcdip, 'poouids/'+pool)
+ for p, ip in othermarkers():
+  if p == pool:
+   dels(ip, 'poouids/'+pool)
+ otherforget(pool)
+
 # r10m (QC proof 10l N2): the reguid retry marker poouids/<pool> was put to 'etcdip', fixed when the looper started: a node
 # that became leader meanwhile answers on the leader address only, the put to its own address was lost, no marker, and the
 # pool kept the id its stale leg also has (QSD5.304 hazard).  Container flavour: every pass reads who leads now and uses
@@ -648,6 +796,12 @@ def putmarker(pool):
    back = ''
   where.append(ip+(' ok' if back == myhost else ' not read back ('+back[:40]+')'))
   if back == myhost:
+   if ip != etcdip:
+    # r10n (V-12): kept, so the retry loop also reads this address
+    d = jstate(OTHERF)
+    d[pool] = sorted(set((d.get(pool) if isinstance(d.get(pool), list) else []) + [ip]))
+    jsave(OTHERF, d)
+    where[-1] += ' (another address than '+etcdip+': the retry loop reads it too)'
    break
  try:
   with open('/root/poouids.log','a') as f:
@@ -867,6 +1021,21 @@ def _zpooltoimport(*args):
   remembermembers(allnow.get('disks', {}))     # r10i (F2)
  if '_1' in str(poouids):
     poouids = []
+ if iscontainer():
+    # r10n (V-12): markers put on another address than etcdip (putmarker) are worked off here too
+    seenp = set(str(p[0]).split('/')[-1] for p in poouids if isinstance(p, (list, tuple)) and p)
+    for opool, oip in othermarkers():
+        if opool in seenp:
+            continue
+        try:
+            v = str(get(oip, 'poouids/'+opool)[0])
+        except Exception:
+            v = '_1'
+        if v == myhost:
+            poouids.append(('poouids/'+opool, myhost))
+            seenp.add(opool)
+        elif v == '_1':
+            otherforget(opool)             # gone there (deleted by someone else): forget the address
  for poo in poouids:
     print('poouids start')
     pool=poo[0].split('/')[1]
@@ -874,7 +1043,10 @@ def _zpooltoimport(*args):
     # take over that list still names the old host for a few seconds, the marker was dropped in that window and the pool kept
     # its old id for ever (seen in QC test 14, QSD5.304: the returning node imported its stale leg and the data was lost).
     if not poolishere(pool) or destroyedpool(pool):
-        dels(etcdip, 'poouids/'+pool)      # the pool is not ours any more (taken over elsewhere or deleted): nothing to retry here
+        if iscontainer():
+            delmarker(pool)                # r10n (V-12): on every address it was put on
+        else:
+            dels(etcdip, 'poouids/'+pool)      # the pool is not ours any more (taken over elsewhere or deleted): nothing to retry here
         continue
     if str(get(leaderip,'destroying/'+pool)[0]) != '_1':
         continue                           # QSD5.345: being destroyed: no reguid, no new ActPool/<pool> meanwhile
@@ -890,13 +1062,17 @@ def _zpooltoimport(*args):
             dels(leaderip,'sync/ActPool', pool)
             put(leaderip,'ActPool/'+pool,guid)
             dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+guid+'/request','actpool_'+str(stamp()))
-            dels(etcdip, 'poouids/'+pool) 
+            if iscontainer():
+                delmarker(pool)            # r10n (V-12)
+            else:
+                dels(etcdip, 'poouids/'+pool)
         else:
             print('pool not ready yet')
  if iscontainer():
   actpoolreconcile(mypools)      # r10h (finding 5); container flavour only (G8)
  HOLDSEEN.clear()                         # r10l (K1): the pools whose hold this pass judges (leavehold)
  MISSSEEN.clear()                         # r10m (N6): the pools whose missing members this pass looks at
+ DEVSEEN.clear()                          # r10n (V-13)
  if myhost not in str(needtoimport):
   print(needtoimport)
   print('no need to import a pool here')
@@ -955,25 +1131,40 @@ def _zpooltoimport(*args):
    # Import only from the disks that are members of this pool (etcd), so a stale leg that kept the pool's name but was
    # detached while its node was away (old guid, free disk now) can never be imported as the pool and then be re-attached over.
    # r10j (R1): container flavour: '-d /dev/disk/by-id/<disk>-part1' per member, never a /tmp dir (see memberdevs)
-   impargs = importargs(pool, getall(leaderip)['disks'])
-   if iscontainer() and not impargs:
+   pdisks = getall(leaderip)['disks']
+   impargs = importargs(pool, pdisks)
+   miss = []
+   if iscontainer():
+    miss = missingmembers(pool, pdisks)
+    if miss and not misswait(pool) and cdiskids():
+     # r10n (V-4): a member link is missing: make the links from sysfs now (cdiskids.sh), then look again
+     impargs = importargs(pool, pdisks)
+     miss = missingmembers(pool, pdisks)
+   if iscontainer() and (not impargs or miss):
     # r10m (N7, N6): no member device by name: the devices come from a list-only scan, or nothing is tried
-    if misswait(pool):
+    # r10n (V-1): also when only SOME member disks have no device by name: the scan's devices of the same block are added
+    if not impargs and misswait(pool):
      HOLDSEEN.add(pool)                   # a running hold entry is kept while the pause runs
      continue
     sdevs, listed = scandevs(pool, poolid)
-    if not listed:
+    if not impargs and not listed:
      wait = missnote(pool)
      print('import of', pool, 'not tried: no member disk visible, next look in', wait, 's')
      decision(pool, 'waiting: no member disk of '+pool+' is visible (a list-only scan does not show '+str(poolid)+'); not tried, looked at again after a pause ('+str(MISSSTEP)+' s, doubled per miss, at most '+str(MISSMAX)+' s)')
      continue
-    missclear(pool)
-    if not sdevs:
-     decision(pool, 'skipped: a list-only scan shows '+str(poolid)+' but none of its member devices is found here: not imported without knowing its devices')
+    if not impargs and not sdevs:
+     # r10n (V-11): the same pause as N6 (round 10m ran a new 60 s scan in every pass here)
+     wait = missnote(pool)
+     decision(pool, 'skipped: a list-only scan shows '+str(poolid)+' but none of its member devices is found here: not imported without knowing its devices; looked at again after a pause ('+str(MISSSTEP)+' s, doubled per miss, at most '+str(MISSMAX)+' s)')
      continue
-    for d in sdevs:
+    missclear(pool)
+    named = impargs[1::2]
+    added = [d for d in sdevs if not any(samedev(d, x) for x in named)]
+    for d in added:
      impargs += ['-d', d]
-    MEMBERSRC[pool] = 'devices found by a list-only scan'
+    if added:
+     MEMBERSRC[pool] = ('devices found by a list-only scan' if not named else
+                        'devices found by name and by a list-only scan (no device by name for '+' '.join(miss[:4])+')')
    elif iscontainer():
     missclear(pool)
    if iscontainer():
@@ -982,6 +1173,11 @@ def _zpooltoimport(*args):
     if why:
      print('import of', pool, 'held:', why)
      decision(pool, why)
+     continue
+    nodes = [d for d in impargs[1::2] if not d.startswith(BYID)]
+    if nodes and not devwaited(pool):
+     # r10n (V-13): one pass for the by-id link of a device the scan found only as a /dev node (judged after the hold)
+     decision(pool, 'waiting one pass: '+' '.join(nodes)+' (found by a list-only scan) has no by-id link yet (cdiskids.sh ran); the /dev node is used if the link is still missing in the next pass')
      continue
     if note:
      decision(pool, note)
@@ -1035,7 +1231,10 @@ def _zpooltoimport(*args):
        dels(leaderip,'sync/ActPool', pool)
        put(leaderip,'ActPool/'+pool,guid)
        dosync('actpool_', 'sync/ActPool/Add_'+pool+'_'+guid+'/request','actpool_'+str(stamp()))
-       dels(etcdip, 'poouids/'+pool) 
+       if iscontainer():
+        delmarker(pool)                   # r10n (V-12)
+       else:
+        dels(etcdip, 'poouids/'+pool)
     else:
        print('reguid refused (pool not healthy yet), retried later:', result.stderr.decode('utf-8','replace'))
        if iscontainer():
@@ -1075,6 +1274,7 @@ def _zpooltoimport(*args):
  if iscontainer():
   holdprune(HOLDSEEN)                     # r10l (K1): a hold entry lives only while its pool is judged every pass
   missprune(MISSSEEN)                     # r10m (N6)
+  devwaitprune(DEVSEEN)                   # r10n (V-13)
         
     
  if myhost != leader:
