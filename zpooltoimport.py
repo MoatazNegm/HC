@@ -841,7 +841,7 @@ def importscan(impdir):
  for line in out.split('\n'):
   w = line.split()
   if len(w) >= 2 and w[0] == 'pool:':
-   cur = {'name': w[1], 'id': '', 'state': '', 'members': []}
+   cur = {'name': w[1], 'id': '', 'state': '', 'members': [], 'leaves': [], 'names': []}
    res.append(cur)
    inconfig = False
   elif cur is None or not w:
@@ -854,14 +854,47 @@ def importscan(impdir):
    inconfig = True
   elif inconfig and len(w) >= 2 and w[0] != cur['name'] and not w[0].startswith(('mirror', 'raidz', 'spare', 'cache', 'logs', 'replacing', 'draid')):
    cur['members'].append(w[0])
+   cur['leaves'].append((w[0], w[1]))   # r10o (N1): each leg with its state
+   cur['names'].append(w[0])
+  elif inconfig and len(w) == 1 and w[0] != cur['name'] and w[0] not in ('cache', 'logs', 'spares', 'special', 'dedup') and not w[0].startswith(('mirror', 'raidz', 'spare-', 'replacing', 'draid')):
+   cur['names'].append(w[0])            # r10o (N1): a cache / spare disk is listed by name only (no state)
  return res
 
-def importbyname(pool, poolid, impdir):
+def degradedok(cand, groups):
+ # r10o (QC proof 10n N1, 745.2): after an owner's stop the pool on the survivor's disks is always DEGRADED (the stopped
+ # node's leg is missing), so the r10h rule "only an ONLINE pool by name" never let the QX-864 stale-id retry fire in a
+ # real take over (18 min until the owner came back).  A DEGRADED pool is taken by name only when its legs are the pool's
+ # member disks: every leg it names is a member disk of <pool> (etcd, or as last listed), at least one leg is ONLINE, and
+ # every member disk that has a device here is one of its legs (a member disk here that is NOT in it, or a leg that is not
+ # a member, means the labels are not this pool's current set: QSD5.304's stale leg).  A guid-named leg (digits) is a
+ # missing leg.  '' = acceptable, else why not.
+ import re
+ if not groups:
+  return 'no member disk of the pool is known to compare its legs with'
+ base = lambda n: re.sub(r'-part[0-9]+$', '', str(n).replace(BYID, ''))
+ mem = set(base(n) for g in groups for n in g if str(n) and not str(n).isdigit())
+ have = set(base(n) for n in cand.get('names', cand.get('members', [])))
+ strangers = [n for n in cand.get('names', cand.get('members', [])) if not str(n).isdigit() and base(n) not in mem]
+ if strangers:
+  return 'leg '+' '.join(strangers[:4])+' is not a member disk of the pool'
+ if not any(st == 'ONLINE' for n, st in cand.get('leaves', [])):
+  return 'none of its legs is ONLINE'
+ here = [g for g in groups if any(namedev(n) for n in g)]
+ if not here:
+  return 'no member disk of the pool has a device here'
+ notin = [g[0] for g in here if not any(base(n) in have for n in g)]
+ if notin:
+  return 'member disk '+' '.join(notin[:4])+' has a device here but is not one of its legs'
+ return ''
+
+def importbyname(pool, poolid, impdir, groups=None):
  # QSD5.352 r10h (QC proof 10g finding 3): an import by the published id (ActPool/<pool>) that fails is retried by name
  # ONLY when that is safe: etcd lists member disks of the pool (impdir), the id is not among the pools on those disks at
  # all (the published id is stale, finding 5), and exactly ONE pool of that name is there and it is ONLINE (every member
  # present with the same, newest label).  Several pools of that name (a stale leg of an older id: QSD5.304 lost data that
- # way), or only a DEGRADED one, are never imported by name: the candidates are logged and nothing is done.
+ # way) are never imported by name: the candidates are logged and nothing is done.
+ # r10o (QC proof 10n N1): a DEGRADED one is taken too when its legs match the pool's member disks (degradedok; groups =
+ # membergroups() of the pass).  Without groups (or FAULTED / UNAVAIL / any other state) it is refused as before.
  # Returns (id or None, why).
  if not impdir:
   if iscontainer() and MEMBERSRC.get(pool) == 'none':
@@ -873,7 +906,15 @@ def importbyname(pool, poolid, impdir):
   return None, 'no import by name: id '+str(poolid)+' is on the member disks ('+desc+')'
  if len(cands) != 1:
   return None, 'no import by name: '+str(len(cands))+' pools named '+pool+' on the member disks: '+desc
- if cands[0]['state'] != 'ONLINE' or not cands[0]['id'].isdigit():
+ if not cands[0]['id'].isdigit():
+  return None, 'no import by name: the only pool named '+pool+' on the member disks is not ONLINE: '+desc
+ if cands[0]['state'] == 'DEGRADED' and groups is not None:
+  why = degradedok(cands[0], groups)
+  if why:
+   return None, 'no import by name: the only pool named '+pool+' on the member disks is not ONLINE: '+desc+'; DEGRADED is not taken: '+why
+  lost = ' '.join(n for n, st in cands[0].get('leaves', []) if st != 'ONLINE')
+  return cands[0]['id'], 'import by name: id '+str(poolid)+' is not on the member disks, the only pool named '+pool+' there is '+desc+'; DEGRADED taken: its legs are member disks of '+pool+', every member disk here is one of them'+(' (not ONLINE: '+lost+')' if lost else '')
+ if cands[0]['state'] != 'ONLINE':
   return None, 'no import by name: the only pool named '+pool+' on the member disks is not ONLINE: '+desc
  return cands[0]['id'], 'import by name: id '+str(poolid)+' is not on the member disks, the only pool named '+pool+' there is '+desc
 
@@ -1196,7 +1237,7 @@ def _zpooltoimport(*args):
    if res.returncode != 0 and iscontainer():
     # r10h (finding 3): why the import failed was thrown away ("import failed (rc 1)" 84 times, nothing else)
     failnote = ': '+res.stderr.decode('utf-8','replace').strip().replace('\n',' | ')[:300]
-    alt, why = importbyname(pool, poolid, impargs)
+    alt, why = importbyname(pool, poolid, impargs, membergroups(pool, pdisks))   # r10o (N1): the members to match a DEGRADED pool
     failnote += '; '+why
     if alt:
      decision(pool, 'import of '+str(poolid)+' failed (rc '+str(res.returncode)+')'+failnote)
