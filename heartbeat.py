@@ -31,6 +31,7 @@ def splitnext(value):
  parts = value.split('/')
  return parts[0], (parts[1] if len(parts) > 1 else '')
 
+CLOSTTRIES = 4      # r10o (O3): failed probe rounds before a node is lost, container flavour (physical: 2)
 def iscontainer():
  return os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')
 
@@ -295,8 +296,15 @@ def heartbeat(*args):
             print('nmapping')
             result = 'failed'
             tries = 0
-            while tries < 2:
+            # QSD5.352 r10o (QC proof 10n O3), container flavour: a node is lost only after CLOSTTRIES failed rounds, 2 s apart
+            # (~16-20 s), an answered ping counts as an answer, and 'res' is new in every round.  Two rounds 1 s apart (~5 s)
+            # were shorter than the bond0 re-activation of a leader that started a share under load: the follower took the
+            # cluster ip from a live leader and both led with their own etcd (r10n s2, 16:14 UTC).  Physical: unchanged.
+            ctr = iscontainer()
+            while tries < (CLOSTTRIES if ctr else 2):
                 tries +=1
+                if ctr:
+                    res = ''
                 try:
                     cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+hostip 
                     res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
@@ -312,11 +320,13 @@ def heartbeat(*args):
                     print(cmdline)
                     try:
                         subprocess.check_output(cmdline.split())
+                        if ctr:
+                            result=(host,'ok')      # r10o (O3): the ping answered (it was ignored: lost after 2 rounds anyway)
                     except subprocess.CalledProcessError as e:
                         result=(host,'lost')
                 if 'ok' in str(result):
                     break
-                sleep(1)
+                sleep(2 if ctr else 1)
             print(result)
             if 'ok' not in str(result):
                 with open('/root/heartproblem','a') as f:
