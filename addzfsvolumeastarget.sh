@@ -52,6 +52,15 @@ change=0
 ipdom=`echo $ipaddr | sed 's/\.//g'`
 diskids=$disk'-'$myhost'-'$vol
 iqn='.2016-03.com.'$ipdom':data'
+# QSD5.352 r10p (QC proof 10o F2, 550.1/.2): two runs for one address at the same time (a create and the iSCSI
+# watchdog's re-export, or two volumes of one address) both found no LUN of the backstore and both made one: zd16 was
+# mapped as lun1 AND lun2.  Container flavour: the runs of one target are serialized (flock, 120 s; held to the end of
+# this script) and the tpg LUN is made only when no LUN of the target maps the backstore yet.  Physical unchanged.
+if is_container 2>/dev/null; then
+ mkdir -p /var/lock 2>/dev/null
+ exec 8>>/var/lock/addzfsvolumeastarget.$ipdom.lock
+ flock -w 120 8 || tlog "WARNING: the lock of target $ipdom was not taken in 120 s, $diskids goes on without it"
+fi
 targetcli ls iscsi/ | grep ".$ipdom:data" &>/dev/null
 if [ $? -ne 0 ]; then
  targetcli iscsi/ create iqn.2016-03.com.${ipdom}:data &>/dev/null
@@ -71,7 +80,11 @@ tpg='tpg1'
 #targetcli iscsi/iqn${iqn} create $portalport  
 targetcli iscsi/iqn${iqn} set global auto_add_mapped_luns=false
 targetcli iscsi/iqn.2016-03.com.$ipdom:data/${tpg}/portals delete 0.0.0.0 3260
-targetcli iscsi/iqn${iqn}/${tpg}/luns/ create /backstores/block/$diskids  
+if is_container 2>/dev/null && targetcli ls iscsi/iqn${iqn}/${tpg}/luns 2>/dev/null | grep -qF "[block/$diskids "; then
+ tlog "backstore $diskids already has a LUN of iqn${iqn}, no second one (r10p F2)"
+else
+ targetcli iscsi/iqn${iqn}/${tpg}/luns/ create /backstores/block/$diskids
+fi
 targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
 echo targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
 targetcli ls iscsi/iqn${iqn}/${tpg}/acls/$target >/dev/null 2>&1 || tlog "ACL of '$target' could not be made on iqn${iqn} (not a valid initiator name?)"
