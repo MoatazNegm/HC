@@ -169,7 +169,22 @@ tpgs1=`echo "$currentdisks" | grep iqn | grep TPG | grep :t1`
 #tpgs1=(`targetcli ls /iscsi | grep iqn | grep TPG | grep ':t1'`)
 # only MY target: with several clusters in one kernel (containers) the LIO config also holds other nodes' targets
 tpgs=`echo "$currentdisks" | grep iqn | grep TPG | grep "com.${myhost}:t1" | awk -F'iqn' '{print $2}' | awk '{print $1}'`
-# mapping the luns to every iqn in the tpgs create the missing ones and create also the 
+# QSD5.352 fix18 (QC 630, QX-031 step 2): the ACL of every active partner on MY target, independent of the disk list.
+# On a VirtualBox/physical node 'bootdisk=sd' above leaves no disk at all, so the loop below never ran and a partner that
+# joined after this node's boot (diskref.sh/addtargetdisks.sh runs only at boot) never got an ACL: its logins failed with
+# 'authorization failure' and it never saw this node's disks (one-way iSCSI).  auto_add_mapped_luns is on here, so the
+# new ACL gets the existing LUNs.  Only missing ACLs are created; nothing is deleted.
+for node in "${nodes[@]}"; do
+ for iqn in ${tpgs}; do
+	echo "$currentdisks" |  awk -v iqn="iqn$iqn" '$0 ~ iqn {flag=1} flag; /o- portals/{flag=0}'  | grep -q "redhat:$node "
+	if [ $? -ne 0 ];
+	then
+		targetcli iscsi/iqn${iqn}/tpg1/acls/ create iqn.1994-05.com.redhat:$node
+		echo An tpg1/acl is create for the node $node
+	fi
+ done
+done
+# mapping the luns to every iqn in the tpgs create the missing ones and create also the
 for node in "${nodes[@]}"; do
  for ddisk in "${disks[@]}"; do
 	for iqn in "${tpgs[@]}"; do
