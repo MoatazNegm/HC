@@ -9,7 +9,7 @@ from etcdput import etcdput as put
 from Evacuatelocal import setall
 from etcddel import etcddel as dels
 from usersyncall import usersyncall, usrfninit, oneusersync, pulladminhash, followadminhash
-from groupsyncall import groupsyncall, grpfninit, onegroupsync
+from groupsyncall import groupsyncall, grpfninit, onegroupsync, addmissinggroups
 from socket import gethostname as hostname
 from etcdsync import synckeys
 from time import time as timestamp
@@ -600,6 +600,12 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
     print('2;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;')
     put(myhostip, syncleft+'/'+myhost, stamp)
      
+ if myhost != leader and 'pullsync' not in pullsync:
+  # QSD5.352 fix17 (QC 628): re-add the groups this member missed (a lost or wrongly finished add request)
+  try:
+   addmissinggroups()
+  except Exception as e:
+   print('addmissinggroups:', e)
  if myhost != leader:
   dones = get(leaderip,'sync','/request/dhcp')
   otherdones = [ x for x in dones if '/request/dhcp' in str(x) ] 
