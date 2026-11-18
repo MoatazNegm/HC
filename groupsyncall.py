@@ -6,6 +6,7 @@ from etcdput import etcdput as put
 from etcddel import etcddel as dels 
 from ast import literal_eval as mtuple
 from socket import gethostname as hostname
+from time import sleep
 
 allusers= []
 leader, leaderip, myhost, myhostip = '','','',''
@@ -100,6 +101,27 @@ def groupsyncall(tosync=''):
   thread_add(user,syncip)
   put(syncip, user[0],user[1])
    
+def addmissinggroups():
+ # QSD5.352 fix17 (QC 628): a member that missed a group add (request marked done, or lost while the node was down) never got
+ # it back: a node the cluster knows runs only 'syncrequest' at boot, and only 'syncall' compares the group lists.  Here the
+ # member compares the group NAMES with the leader's on every syncrequest pass and adds the missing ones the normal way
+ # (onegroupsync -> thread_add -> UnixAddGroup pull).  Only adds; deletes stay with their own requests.
+ global leader, leaderip, myhost, myhostip
+ if not myhost or myhost in leader:
+  return
+ leadergroups = get(leaderip,'usersigroup','--prefix')
+ if '_1' in leadergroups:
+  return                  # failed read of the leader: try again next pass, never act on it
+ localgroups = get(myhostip,'usersigroup','--prefix')
+ if '_1' in localgroups:
+  localgroups = []
+ localnames = groupnames(localgroups)
+ for name in sorted(groupnames(leadergroups) - localnames):
+  if name == 'Everyone':
+   continue
+  print('group missing on this member, adding it:', name)
+  onegroupsync('Add', name, 'pullavail')
+
 def onegroupsync(oper,usertosync,tosync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip, pport
  if myhost in leader:
@@ -109,11 +131,18 @@ def onegroupsync(oper,usertosync,tosync='pullavail'):
  if oper == 'Add':
     # QSD5.345: the exact key of this group (the search by text also returned other groups whose value merely contains
     # the name, and [0] could be one of them)
-    if 'pullsync' in tosync:
-        found=getnoport(leaderip, pport, 'usersigroup/'+usertosync)
-    else:
-        found=get(leaderip,'usersigroup/'+usertosync)
-    value=str(found[0]) if len(found) > 0 else '_1'
+    # QSD5.352 fix17 (QC 628, QX-029 step 4): etcdget answers '_1' for ANY failed read (a busy leader, the 2 s limit), the
+    # same as for a missing key; one failed read was taken as 'group gone', the request was marked done anyway and the member
+    # never got the group (qg1 created 2 s before qg2).  Read again before giving up (up to 5 times, 2 s apart).
+    for _try in range(5):
+        if 'pullsync' in tosync:
+            found=getnoport(leaderip, pport, 'usersigroup/'+usertosync)
+        else:
+            found=get(leaderip,'usersigroup/'+usertosync)
+        value=str(found[0]) if len(found) > 0 else '_1'
+        if value not in ('_1', '-1', '', 'None'):
+            break
+        sleep(2)
     if value in ('_1', '-1', '', 'None'):
         print('group add skipped, group not on the leader any more:', usertosync)
         return
