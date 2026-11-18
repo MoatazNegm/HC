@@ -67,6 +67,102 @@ def synclog(msg):
  except Exception:
   pass
 
+# r10p (QC proof 10o F1): what a sync pass did is kept, the per-pass /root/syncreq.log is written over every 2 s.
+# /root/syncpass.log: failed and slow requests (> SLOWITEM s), passes longer than SLOWPASS s with their phase times,
+# reconcile cuts; at most PASSLOGMAX bytes (the older half is dropped).  /root/syncreq.current: the request the running
+# pass works on and since when (a hung pass shows there).  Container flavour only.
+PASSLOG = '/root/syncpass.log'
+PASSCUR = '/root/syncreq.current'
+PASSONCE = '/root/syncpass.once'
+PASSLOGMAX = 1000000
+SLOWITEM = 10
+SLOWPASS = 20
+ITEMLIMIT = 300
+ENDBUDGET = 30
+passstats = {'start': 0, 'failed': 0, 'requests': 0, 'loopend': 0}
+_passonce = set()
+
+class ItemTimeout(Exception):
+ pass
+
+def _itemexpired(signum, frame):
+ # re-armed: a bare 'except:' of a helper (etcdput, etcddel ...) that swallows the first one does not unbound the item
+ try:
+  import signal
+  signal.alarm(5)
+ except Exception:
+  pass
+ raise ItemTimeout('no end after '+str(ITEMLIMIT)+' s')
+
+def itemalarm(on):
+ # one request of a pass may take ITEMLIMIT s at most (SIGALRM in the main thread); the physical flavour is unchanged
+ if not iscontainer():
+  return
+ try:
+  import signal
+  if on:
+   signal.signal(signal.SIGALRM, _itemexpired)
+   signal.alarm(ITEMLIMIT)
+  else:
+   signal.alarm(0)
+ except Exception:
+  pass
+
+def passlog(msg, once=None):
+ if not iscontainer():
+  return
+ if once is not None:
+  # a failing request is tried again every pass (every 2 s, a new process): log it once, the stamps are kept in a file
+  try:
+   if not _passonce and os.path.exists(PASSONCE):
+    with open(PASSONCE) as f:
+     _passonce.update(x.strip() for x in f.readlines()[-200:])
+  except Exception:
+   pass
+  if once in _passonce:
+   return
+  _passonce.add(once)
+  try:
+   with open(PASSONCE, 'a') as f:
+    f.write(once+'\n')
+   if os.path.getsize(PASSONCE) > 100000:
+    with open(PASSONCE) as f:
+     keep = f.readlines()[-200:]
+    with open(PASSONCE, 'w') as f:
+     f.writelines(keep)
+  except Exception:
+   pass
+ try:
+  from datetime import datetime
+  if os.path.exists(PASSLOG) and os.path.getsize(PASSLOG) > PASSLOGMAX:
+   with open(PASSLOG) as f:
+    keep = f.readlines()
+   with open(PASSLOG, 'w') as f:
+    f.writelines(keep[len(keep)//2:])
+  with open(PASSLOG, 'a') as f:
+   f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+str(sys.argv[1] if len(sys.argv) > 1 else '')+' pid '+str(os.getpid())+' '+msg+'\n')
+ except Exception:
+  pass
+
+def passmark(myhost, syncinfo):
+ if not iscontainer():
+  return
+ try:
+  from datetime import datetime
+  with open(PASSCUR, 'w') as f:
+   f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' pid '+str(os.getpid())+' '+str(myhost)+' '+('idle (pass end phase)' if syncinfo is None else str(syncinfo)[:200])+'\n')
+ except Exception:
+  pass
+
+def passend(myhost, leader):
+ if not iscontainer() or not passstats['start']:
+  return
+ now = timestamp()
+ total = now - passstats['start']
+ if total > SLOWPASS or passstats['failed']:
+  loop = (passstats['loopend'] or now) - passstats['start']
+  passlog('pass of '+str(myhost)+' (leader '+str(leader)+'): '+str(int(total))+' s, '+str(passstats['requests'])+' requests in '+str(int(loop))+' s, end phase '+str(int(total-loop))+' s, failed '+str(passstats['failed']))
+
 software = 'na'
 def reqorder(item):
  """Order of a pending sync request = the time it was filed, in integer nanoseconds.
@@ -281,6 +377,7 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
      myrequests.sort(key=reqorder, reverse=False)
  
  print('myrequests are', myrequests)
+ passstats['requests'] = len([x for x in myrequests if isinstance(x, (list, tuple))])
  for syncinfo in myrequests:
   evacuateflag = 0
   flag = 1
@@ -450,6 +547,7 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
     if 'pullsync' not in pullsync:
         followadminhash(leaderip, myhostip)
  passstart = timestamp(); lastcheck = passstart
+ passstats.update({'start': passstart, 'failed': 0, 'requests': 0, 'loopend': 0})
  allsyncs = get(leaderip,'sync','request') 
  if 'pullsync' in pullsync:
     print('allsyncs',pullsync,allsyncs)
@@ -471,198 +569,231 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
     myrequests.sort(key=reqorder, reverse=False)
  print('myrequests are', myrequests)
  for syncinfo in myrequests:
-  evacuateflag = 0
-  flag = 1
-  # r10h (finding 8): a long pass re-reads the leader every LEADERRECHECK s and stops when it changed (the branch taken
-  # at the start -- leader or follower -- is wrong from then on); the next pass starts 2 s later with the new name
-  if iscontainer() and 'pullsync' not in pullsync and timestamp() - lastcheck > LEADERRECHECK:
-   lastcheck = timestamp()
-   now = leaderread(leaderip, 1, 0)
-   if now is not None and now != leader:
-    synclog('syncrequest of '+str(myhost)+': the leader changed from '+str(leader)+' to '+now+' after '+str(int(lastcheck-passstart))+' s, pass stopped')
-    return
-  if  len(syncinfo[0]) == 1:
-    continue
-  if '/initial/' in str(syncinfo):
-   if myhost != leader or 'pullsync' in pullsync:
-    print(leader,leaderip,myhost,myhostip, syncinfo)
-    doinitsync(leader,leaderip,myhost,myhostip, syncinfo,pullsync)
-   elif myhost == leader:
-    syncinit(leader,leaderip, myhost,myhostip)
-  else:
-   syncleft = syncinfo[0]
-   stamp = syncinfo[1]
-   print('syncleft',syncleft)
-   if 'pullsync' in pullsync:
-    syncleft = syncleft.replace(pullsync,'')
-   sync = syncleft.split('/')[1]
-   opers= syncleft.split('/')[2].split('_')
-   print('#########################################################################')
-   print('the sync',sync)
-   if sync in wholeetcd :
-    if sync == 'Partnr':
-      synckeys(leaderip, myhostip, 'Partner', 'Partner')
-    else:
-        synckeys(leaderip,myhostip, sync,sync)
-   if sync in etcdonly and myhost != leader:
-     if opers[0] == 'Add':
-      if 'Split' in opers[1]:
-       put(myhostip,sync,opers[2].replace(':::','_').replace('::','/'))
-      else:
-       print('oper', opers, sync)
-       put(myhostip,sync+'/'+opers[1].replace(':::','_').replace('::','/'),opers[2].replace(':::','_').replace('::','/'))
+  # r10p (QC proof 10o F1): one request that raises (an IndexError on a bad value, CalledProcessError of a script,
+  # SystemExit of synckeys() on a failed read) or hangs ended / blocked the WHOLE pass on every round: the requests
+  # after it were never acknowledged, the leader never pruned them and isinsync stayed "no" for 7-17 min after a node
+  # return.  Container flavour: each request is guarded and bounded (ITEMLIMIT s); a failed one is logged in
+  # /root/syncpass.log, not acknowledged (it is tried again next pass) and the pass goes on with the next one.
+  _it0 = timestamp()
+  passmark(myhost, syncinfo)
+  itemalarm(True)
+  try:
+   evacuateflag = 0
+   flag = 1
+   # r10h (finding 8): a long pass re-reads the leader every LEADERRECHECK s and stops when it changed (the branch taken
+   # at the start -- leader or follower -- is wrong from then on); the next pass starts 2 s later with the new name
+   if iscontainer() and 'pullsync' not in pullsync and timestamp() - lastcheck > LEADERRECHECK:
+    lastcheck = timestamp()
+    now = leaderread(leaderip, 1, 0)
+    if now is not None and now != leader:
+     synclog('syncrequest of '+str(myhost)+': the leader changed from '+str(leader)+' to '+now+' after '+str(int(lastcheck-passstart))+' s, pass stopped')
+     return
+   if  len(syncinfo[0]) == 1:
+     continue
+   if '/initial/' in str(syncinfo):
+    if myhost != leader or 'pullsync' in pullsync:
+     print(leader,leaderip,myhost,myhostip, syncinfo)
+     doinitsync(leader,leaderip,myhost,myhostip, syncinfo,pullsync)
+    elif myhost == leader:
+     syncinit(leader,leaderip, myhost,myhostip)
+   else:
+    syncleft = syncinfo[0]
+    stamp = syncinfo[1]
+    print('syncleft',syncleft)
+    if 'pullsync' in pullsync:
+     syncleft = syncleft.replace(pullsync,'')
+    sync = syncleft.split('/')[1]
+    opers= syncleft.split('/')[2].split('_')
+    print('#########################################################################')
+    print('the sync',sync)
+    if sync in wholeetcd :
+     if sync == 'Partnr':
+       synckeys(leaderip, myhostip, 'Partner', 'Partner')
      else:
-      print(sync,opers)
-      if 'ready' not in sync:
-        dels(myhostip,opers[1].replace(':::','_').replace('::','/'),opers[2].replace(':::','_').replace('::','/'))
-   if sync in syncanitem:
-      if 'nextlead' in sync:
-        synckeys(leaderip,myhostip, sync,sync)
-        if myhost in str(get(myhostip,'nextlead','--prefix')):
-            cmdline='/TopStor/promrepli.sh '+leaderip+' '+myhostip
-            result=subprocess.run(cmdline.split(),stderr=subprocess.STDOUT)
-      elif 'log' in sync:
-        logid=opers[0]+"_"+opers[1]
-        cmdline="/TopStor/synclogs.sh  "+leaderip+" "+etcdip+" "+logid+" "+opers[1]
-        result=subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
-      elif 'bond' in sync:
-        synckeys(leaderip, myhostip, sync, sync)
-        cmdline ="/TopStor/syncbonds.sh "+etcdip
-        result = subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
-        if result.returncode == 10:
-            print("Bond config changed. Signaling reboot via etcd for after syncs complete.")
-            signal_reboot_via_etcd(etcdip, myhost, 'pls_fromsyncs')
-      elif 'getconfig' in sync:
-        collectConfig(leaderip, myhost)
-      elif sync in 'Snapperiod' :
-       synckeys(leaderip,myhostip, sync,sync)
-       etctocron(leaderip)
-      elif sync in 'diskref':
-        #cmdline='/pace/diskchange.sh '+' checksync'+' '+opers[0]+' '+opers[1]
-        print('diskref',cmdline)
-        #result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-      elif sync in 'hostdown':
-        cmdline='/pace/hostdown.sh '+opers[0]
-        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-      elif sync in 'dirty':
-        for dirt in dirtydic:
-            put(etcdip, 'dirty/'+dirt, str(dirtydic[dirt]))
-      elif 'syncfn' in opers[0]:
-        print('opers',opers)
-        if 'evacuatehost' in str(syncleft):
-            isready = get(etcdip, 'ready',opers[2])
-            evacuateflag = 1
-            if opers[2] not in str(isready):    
-                globals()[opers[1]](*opers[2:])
-                dels(etcdip, 'ActivePartners',opers[2])
-                if myhost == leader:
-                    cmdline = '/TopStor/promserver.sh '+leaderip
-                    subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
-                    dels(leaderip,'reboot', opers[2])
-                    dels(leaderip,'bybyleader',opers[2])
-                    discip = '10.11.11.253'
-                    put(leaderip, 'excepts/'+opers[2],opers[2])
-                    put(discip, 'excepts/'+opers[2],opers[2])
-                    dels(discip,'possible', opers[2])
-                    dels(leaderip,'possible', opers[2])
-                evacuateflag = 0 
-
-        else:        
-            globals()[opers[1]](*opers[2:])
-      elif sync == 'priv':
-        user=syncleft.split('/')[2]
-        synckeys(leaderip, myhostip, 'usersinfo/'+user, 'usersinfo/'+user)
-        newinfo = get(myhostip,'usersinfo/'+user)[0]
-        oldinfo = get(leaderip, 'usersinfo/'+user)[0]
-        if oldinfo != newinfo:
-            flag = 0
- 
-      else:
-       print('opers',opers)
-       if sync in ['cluip','ipaddr', 'namespace','tz','ntp','gw','dns', 'cf']: 
-        cmdline='/TopStor/HostManualconfig'+sync.upper()+" "+" ".join([leader, leaderip, myhost, myhostip]) 
-        print('cmdline',cmdline)
-        try:
-         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-        except subprocess.CalledProcessError as e:
-         print('HostManualconfig'+sync.upper()+' failed (exit '+str(e.returncode)+'): '+e.output.decode('utf-8','replace'))
-         result=''
-       elif sync in ['UsrChange', 'GrpChange']:
-        cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:-1])+' '+'pullsync'
-        print('cmdline',cmdline)
-        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+         synckeys(leaderip,myhostip, sync,sync)
+    if sync in etcdonly and myhost != leader:
+      if opers[0] == 'Add':
+       if 'Split' in opers[1]:
+        put(myhostip,sync,opers[2].replace(':::','_').replace('::','/'))
        else:
-        print(opers,sync)
-        if 'Add' in opers[0]:
-            if 'user' in sync:
-               oneusersync('Add',opers[2],'pullavail') 
-            else:
-               onegroupsync('Add',opers[2],'pullavail') 
-        elif 'Del' in opers[0]:
-            if 'user' in sync:
-               oneusersync('Del',opers[2],'pullavail') 
-            else:
-               onegroupsync('Del',opers[2],'pullavail') 
-        else:    
-            cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:]) 
-            print('cmdline',cmdline)
-            try:
-             result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-            except (FileNotFoundError, PermissionError) as e:
-             # an unknown request (no such script) must not crash the loop: it blocked every later request, so a group or
-             # user deleted on the leader stayed on the follower
-             print('sync request skipped, no such script:', cmdline, e)
+        print('oper', opers, sync)
+        put(myhostip,sync+'/'+opers[1].replace(':::','_').replace('::','/'),opers[2].replace(':::','_').replace('::','/'))
+      else:
+       print(sync,opers)
+       if 'ready' not in sync:
+         dels(myhostip,opers[1].replace(':::','_').replace('::','/'),opers[2].replace(':::','_').replace('::','/'))
+    if sync in syncanitem:
+       if 'nextlead' in sync:
+         synckeys(leaderip,myhostip, sync,sync)
+         if myhost in str(get(myhostip,'nextlead','--prefix')):
+             cmdline='/TopStor/promrepli.sh '+leaderip+' '+myhostip
+             result=subprocess.run(cmdline.split(),stderr=subprocess.STDOUT)
+       elif 'log' in sync:
+         logid=opers[0]+"_"+opers[1]
+         cmdline="/TopStor/synclogs.sh  "+leaderip+" "+etcdip+" "+logid+" "+opers[1]
+         result=subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+       elif 'bond' in sync:
+         synckeys(leaderip, myhostip, sync, sync)
+         cmdline ="/TopStor/syncbonds.sh "+etcdip
+         result = subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+         if result.returncode == 10:
+             print("Bond config changed. Signaling reboot via etcd for after syncs complete.")
+             signal_reboot_via_etcd(etcdip, myhost, 'pls_fromsyncs')
+       elif 'getconfig' in sync:
+         collectConfig(leaderip, myhost)
+       elif sync in 'Snapperiod' :
+        synckeys(leaderip,myhostip, sync,sync)
+        etctocron(leaderip)
+       elif sync in 'diskref':
+         #cmdline='/pace/diskchange.sh '+' checksync'+' '+opers[0]+' '+opers[1]
+         print('diskref',cmdline)
+         #result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+       elif sync in 'hostdown':
+         cmdline='/pace/hostdown.sh '+opers[0]
+         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+       elif sync in 'dirty':
+         for dirt in dirtydic:
+             put(etcdip, 'dirty/'+dirt, str(dirtydic[dirt]))
+       elif 'syncfn' in opers[0]:
+         print('opers',opers)
+         if 'evacuatehost' in str(syncleft):
+             isready = get(etcdip, 'ready',opers[2])
+             evacuateflag = 1
+             if opers[2] not in str(isready):    
+                 globals()[opers[1]](*opers[2:])
+                 dels(etcdip, 'ActivePartners',opers[2])
+                 if myhost == leader:
+                     cmdline = '/TopStor/promserver.sh '+leaderip
+                     subprocess.run(cmdline.split(),stdout=subprocess.PIPE)
+                     dels(leaderip,'reboot', opers[2])
+                     dels(leaderip,'bybyleader',opers[2])
+                     discip = '10.11.11.253'
+                     put(leaderip, 'excepts/'+opers[2],opers[2])
+                     put(discip, 'excepts/'+opers[2],opers[2])
+                     dels(discip,'possible', opers[2])
+                     dels(leaderip,'possible', opers[2])
+                 evacuateflag = 0 
 
-   #if sync in special1 and myhost != leader :
+         else:        
+             globals()[opers[1]](*opers[2:])
+       elif sync == 'priv':
+         user=syncleft.split('/')[2]
+         synckeys(leaderip, myhostip, 'usersinfo/'+user, 'usersinfo/'+user)
+         newinfo = get(myhostip,'usersinfo/'+user)[0]
+         oldinfo = get(leaderip, 'usersinfo/'+user)[0]
+         if oldinfo != newinfo:
+             flag = 0
+ 
+       else:
+        print('opers',opers)
+        if sync in ['cluip','ipaddr', 'namespace','tz','ntp','gw','dns', 'cf']: 
+         cmdline='/TopStor/HostManualconfig'+sync.upper()+" "+" ".join([leader, leaderip, myhost, myhostip]) 
+         print('cmdline',cmdline)
+         try:
+          result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+         except subprocess.CalledProcessError as e:
+          print('HostManualconfig'+sync.upper()+' failed (exit '+str(e.returncode)+'): '+e.output.decode('utf-8','replace'))
+          result=''
+        elif sync in ['UsrChange', 'GrpChange']:
+         cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:-1])+' '+'pullsync'
+         print('cmdline',cmdline)
+         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        else:
+         print(opers,sync)
+         if 'Add' in opers[0]:
+             if 'user' in sync:
+                oneusersync('Add',opers[2],'pullavail') 
+             else:
+                onegroupsync('Add',opers[2],'pullavail') 
+         elif 'Del' in opers[0]:
+             if 'user' in sync:
+                oneusersync('Del',opers[2],'pullavail') 
+             else:
+                onegroupsync('Del',opers[2],'pullavail') 
+         else:    
+             cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:]) 
+             print('cmdline',cmdline)
+             try:
+              result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+             except (FileNotFoundError, PermissionError) as e:
+              # an unknown request (no such script) must not crash the loop: it blocked every later request, so a group or
+              # user deleted on the leader stayed on the follower
+              print('sync request skipped, no such script:', cmdline, e)
 
-   if sync in special1 :
-      try:
-       if myhost != leader:
-        # UnixChangePass reads the hash from THIS node's etcd; nothing copied the leader's new hash here, so a
-        # follower kept (and after a fail over the cluster went back to) the old password
-        newhash = str(get(leaderip,'usershash/'+opers[1])[0]).replace('\n','')
-        if newhash not in ('_1','-1','','None') and len(newhash) > 3:
-         put(myhostip,'usershash/'+opers[1],newhash)
-       cmdline='/TopStor/'+opers[0]+' '+opers[1]+' '+opers[2]
-       result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-      except:
-       print('in case of admin change, the reuslt is not that ok')
-      #cmdline='/TopStor/'+opers[0].split(':')[1]+' '+result+' '+opers[2] +' '+ opers[3]
-      #result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-   if sync not in syncs:
-    # skip it, never stop: a 'return' here dropped every later request on every pass.  A node that came
-    # back after a fail over met an old sync/cversion request first (not handled here any more) and so
-    # never applied anything again -- stale nextlead/er, cluster never in sync.
-    print('there is a sync that is not defined:',sync)
-    continue
-   if flag == 1 and evacuateflag == 0:
-    if 'sync' in pullsync:
-        put(leaderip,pullsync+syncleft+'/'+myhost, stamp)
-    else:
-        put(leaderip,syncleft+'/'+myhost, stamp)
-   if myhost != leader and flag == 1 and evacuateflag == 0:
-    print(';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;')
-    put(myhostip, syncleft+'/'+myhost, stamp)
-    put(myhostip, syncleft, stamp)
-   if myhost == leader  and flag == 1 and evacuateflag == 0:
-    print('2;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;')
-    put(myhostip, syncleft+'/'+myhost, stamp)
+    #if sync in special1 and myhost != leader :
+
+    if sync in special1 :
+       try:
+        if myhost != leader:
+         # UnixChangePass reads the hash from THIS node's etcd; nothing copied the leader's new hash here, so a
+         # follower kept (and after a fail over the cluster went back to) the old password
+         newhash = str(get(leaderip,'usershash/'+opers[1])[0]).replace('\n','')
+         if newhash not in ('_1','-1','','None') and len(newhash) > 3:
+          put(myhostip,'usershash/'+opers[1],newhash)
+        cmdline='/TopStor/'+opers[0]+' '+opers[1]+' '+opers[2]
+        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+       except:
+        print('in case of admin change, the reuslt is not that ok')
+       #cmdline='/TopStor/'+opers[0].split(':')[1]+' '+result+' '+opers[2] +' '+ opers[3]
+       #result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+    if sync not in syncs:
+     # skip it, never stop: a 'return' here dropped every later request on every pass.  A node that came
+     # back after a fail over met an old sync/cversion request first (not handled here any more) and so
+     # never applied anything again -- stale nextlead/er, cluster never in sync.
+     print('there is a sync that is not defined:',sync)
+     continue
+    if flag == 1 and evacuateflag == 0:
+     if 'sync' in pullsync:
+         put(leaderip,pullsync+syncleft+'/'+myhost, stamp)
+     else:
+         put(leaderip,syncleft+'/'+myhost, stamp)
+    if myhost != leader and flag == 1 and evacuateflag == 0:
+     print(';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;')
+     put(myhostip, syncleft+'/'+myhost, stamp)
+     put(myhostip, syncleft, stamp)
+    if myhost == leader  and flag == 1 and evacuateflag == 0:
+     print('2;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;')
+     put(myhostip, syncleft+'/'+myhost, stamp)
      
+  except (Exception, SystemExit, ItemTimeout) as _e:
+   if not iscontainer():
+    raise
+   passlog('request '+str(syncinfo)[:160]+' failed after '+str(int(timestamp()-_it0))+' s, not acknowledged, the pass goes on: '+type(_e).__name__+' '+str(_e)[:160], once=str(syncinfo[1]) if isinstance(syncinfo,(list,tuple)) and len(syncinfo)>1 else str(syncinfo))
+   passstats['failed'] += 1
+   continue
+  finally:
+   itemalarm(False)
+   if timestamp() - _it0 > SLOWITEM:
+    passlog('request '+str(syncinfo)[:160]+' took '+str(int(timestamp()-_it0))+' s')
+ passstats['loopend'] = timestamp()
+ passmark(myhost, None)
  if myhost != leader:
   if 'pullsync' not in pullsync:
    poolidsfollow(leaderip, myhostip)      # r10h (finding 5)
   dones = get(leaderip,'sync','/request/dhcp')
   otherdones = [ x for x in dones if '/request/dhcp' in str(x) ] 
   localdones = get(myhostip, 'sync', '--prefix')
+  # r10p (F1): this reconcile of the local copy is 2 etcdctl calls per leader ack and one whole-prefix read + deletes
+  # per stale local stamp.  On a returned node (old local copy, many acks) it ran for minutes, and every request filed
+  # meanwhile waited for the NEXT pass to be acknowledged.  Container flavour: at most ENDBUDGET s per pass; what is
+  # left is done by the next passes (both loops only make progress: copied keys are skipped, deleted ones are gone).
+  _e0 = timestamp(); _cut = 0
+  localstr = str(localdones); otherstr = str(otherdones)
   for done in otherdones:
-   if str(done) not in str(localdones):
+   if iscontainer() and timestamp() - _e0 > ENDBUDGET:
+    _cut = 1; break
+   if str(done) not in localstr:
     put(myhostip, done[0],done[1])
     put(myhostip, '/'.join(done[0].split('/')[:-1]), done[1])
   deleted = set()
   for done in localdones:
-   if done[1] not in str(otherdones) and done[1] not in deleted :
+   if iscontainer() and timestamp() - _e0 > ENDBUDGET:
+    _cut = 1; break
+   if done[1] not in otherstr and done[1] not in deleted :
     dels(myhostip, 'sync', done[1])
     deleted.add(done[1])
+  if _cut:
+   passlog('local copy reconcile stopped after '+str(int(timestamp()-_e0))+' s (limit '+str(ENDBUDGET)+' s), '+str(len(otherdones))+' acks / '+str(len(localdones))+' local keys, the next pass goes on')
   print('hihihihi-----------------------------------------')
   print(set(get(myhostip,'sync','UsrChange')+['hi'])-set(get(leaderip,'sync','UsrChange')))
   print('hihihihi-----------------------------------------')
@@ -706,6 +837,7 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
      replisyncrequest(replirev,leader, leaderip, myhost, myhostip) 
   insync(leaderip, leader) 
     
+ passend(myhost, leader)
  return     
 
      
