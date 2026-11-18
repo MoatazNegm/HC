@@ -195,6 +195,14 @@ def hostlost(host, hostip):
                     dels(myhostip, 'vol',host)
                     print('leader lost. nextleader is ',nextleader, 'while my host',myhost)
                     nextleader, nextleaderip =  splitnext(get(etcd,'nextlead/er')[0])
+                    # QSD5.352 r10p (QC proof 10o F3, 522.1/.2): a nextlead/er that names the LOST leader itself (the
+                    # leader named itself while no other node was ready, or a broken value) made this node write the dead
+                    # leader as the new one and wait: no take-over until a later loop (.200 after 184 s, API ~10 min).
+                    # Container flavour: such a value counts as 'names nobody' and the fallback picks the next leader.
+                    if nextleader == host and iscontainer():
+                        with open('/root/heartproblem','a') as f:
+                            f.write('\nnextlead/er names the lost leader '+host+' itself; taken as naming nobody (r10p F3)\n')
+                        nextleader, nextleaderip = '', ''
                     if not nextleader:
                         nextleader, nextleaderip, why = fallbacknext(host)
                         with open('/root/heartproblem','a') as f:
