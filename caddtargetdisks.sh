@@ -71,7 +71,8 @@ else
 	# loop / zram / nbd devices.  Creating a backstore that already exists fails harmlessly, as before.
 	rootdisk=`lsblk -no pkname "$(findmnt -no SOURCE / 2>/dev/null)" 2>/dev/null | head -1`
 	[ -z "$rootdisk" ] && rootdisk=sda
-	disks=(`lsblk -dn -o name,vendor | grep -v LIO | awk '{print $1}' | grep -vx "$rootdisk" | grep -vE '^(sr|zd|loop|zram|nbd)'`)
+	# fix19c: only TYPE=disk (device-mapper devices, e.g. the dm "zero" stubs of mkdm.sh with numeric names, are no disks)
+	disks=(`lsblk -dn -o name,type,vendor | awk '$2=="disk" && $3!="LIO-ORG" {print $1}' | grep -vx "$rootdisk" | grep -vE '^(sr|zd|loop|zram|nbd)'`)
 fi
 nodes=(`docker exec etcdclient /TopStor/etcdgetlocal.py Active --prefix | awk -F'Partners/' '{print $2}' | awk -F"'" '{print $1}'`)
 diskids=`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 | grep -v LIO | awk '{print $1" "$2}'`
