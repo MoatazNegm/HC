@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import subprocess,sys, os
+import subprocess,sys, os, datetime
 from etcdgetpy import etcdget as get
 from etcdput import etcdput as put 
 from etcddel import etcddel as dels 
@@ -260,6 +260,25 @@ def homes(etcds, replis, dockers):
  runbygroup(sorted(dirtyset), lambda r: r.split('/')[7], one)
 
 
+def lunmapped(targets, name, ipaddr):
+ # True when the target iqn.2016-03.com.<ip without dots>:data in the 'targetcli ls' text has a LUN 'block/<..>-<name>'
+ # (r10q F8).  The tree is indented: the target's part ends at the next line of the same or a smaller indent.
+ iqn = 'iqn.2016-03.com.'+ipaddr.replace('.','')+':data'
+ inside = False
+ depth = 0
+ for line in targets.split('\n'):
+  pos = line.find('o- ')
+  if pos < 0:
+   continue
+  if inside and pos <= depth:
+   inside = False
+  if line[pos+3:].startswith(iqn+' '):
+   inside, depth = True, pos
+   continue
+  if inside and ' lun' in line[pos:pos+8] and ('block/' in line) and ('-'+name+' ' in line or '-'+name+')' in line):
+   return True
+ return False
+
 def iscsi(etcds, replis):
  global leader, leaderip, myhost, myhostip, etcdip
  cmdline = 'targetcli ls '
@@ -275,7 +294,16 @@ def iscsi(etcds, replis):
    put(leaderip, left,res)
    dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
    #broadcasttolocal(left,res)
-  if reslist[1] not in targets:
+  missing = reslist[1] not in targets
+  # QSD5.352 r10q (QC proof 10p F8, 554.1/554.2): the target of an address was deleted while the backstores of its volumes
+  # stayed: the volume name was still 'in targets' (the backstore line) and nothing was repaired for 40+ min.  Container
+  # flavour: a volume is also re-exported when no LUN of the target of its address maps its backstore.
+  if not missing and len(reslist) > 2 and (os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')):
+   missing = not lunmapped(targets, reslist[1], reslist[2])
+   if missing:
+    with open('/root/iscsitarget.log','a') as flog:
+     flog.write(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+reslist[0]+'/'+reslist[1]+' VolumeCheck: no LUN of iqn.2016-03.com.'+reslist[2].replace('.','')+':data maps its backstore: exported again (r10q F8)\n')
+  if missing:
    print(reslist)
    cmdline='/TopStor/iscsi.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[2]+' '+reslist[3]+' ISCSI '+reslist[4]+' '+reslist[5]+' '+reslist[6]+' '+reslist[7]
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')

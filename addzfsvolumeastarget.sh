@@ -87,7 +87,23 @@ else
 fi
 targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
 echo targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
-targetcli ls iscsi/iqn${iqn}/${tpg}/acls/$target >/dev/null 2>&1 || tlog "ACL of '$target' could not be made on iqn${iqn} (not a valid initiator name?)"
+if ! targetcli ls iscsi/iqn${iqn}/${tpg}/acls/$target >/dev/null 2>&1; then
+ tlog "ACL of '$target' could not be made on iqn${iqn} (not a valid initiator name?)"
+ # QSD5.352 r10q (QC proof 10p F8, 554.1/554.2): the ACL failed because the whole target was gone (removed by the old
+ # owner's stop 4 s after this node made it; see ciscsirelease.sh).  Container flavour: when the target is missing it is
+ # made again here with this volume's LUN and ACL (the other volumes of the address come back by VolumeCheck, which now
+ # also re-exports a volume whose backstore has no LUN).
+ if is_container 2>/dev/null && ! targetcli ls iscsi/ 2>/dev/null | grep -qF "o- iqn${iqn} "; then
+  tlog "target iqn${iqn} is gone (removed while this volume was exported): made again with $diskids (r10q F8)"
+  targetcli iscsi/ create iqn${iqn} >/dev/null 2>&1
+  targetcli iscsi/iqn${iqn}/${tpg}/portals delete 0.0.0.0 3260 >/dev/null 2>&1
+  targetcli ls backstores/block 2>/dev/null | grep -q -- "o- $diskids " || targetcli backstores/block create $diskids /dev/$disk >/dev/null 2>&1
+  targetcli iscsi/iqn${iqn}/${tpg}/luns/ create /backstores/block/$diskids >/dev/null 2>&1
+  targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target >/dev/null 2>&1
+  targetcli ls iscsi/iqn${iqn}/${tpg}/acls/$target >/dev/null 2>&1 && tlog "target iqn${iqn} made again, ACL of '$target' now there" \
+   || tlog "ACL of '$target' still not made after the target iqn${iqn} was made again"
+ fi
+fi
 cluns=`targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls`
 echo $cluns | grep $diskids 
 if [ $? -ne 0 ];

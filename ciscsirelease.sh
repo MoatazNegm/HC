@@ -20,6 +20,16 @@ do
 	pip=`targetcli ls /iscsi/$t/tpg1/portals 2>/dev/null | sed -n 's/.*o- \([0-9.]*\):[0-9]* .*/\1/p' | head -1`
 	[ -n "$pip" ] || continue
 	ip -4 -o addr 2>/dev/null | grep -q " $pip/" || continue
+	# QSD5.352 r10q (QC proof 10p F8, 554.1/554.2): the stop runs twice (stopnode's cstop, then docker stop's).  Between the
+	# two runs the partner imported the pool and built the target of the address again (its own backstores zdN-<partner>-..)
+	# while this node still had the address up: the second run (zfs1 19:12:26) deleted the partner's NEW target 4 s after it
+	# was made (zfs2 19:12:22), q550c's ACL failed and .153 stayed without a target.  A target that maps a backstore of
+	# another node is that node's now: it is kept and logged.
+	other=`timeout 20 targetcli ls /iscsi/$t/tpg1/luns 2>/dev/null | grep -o 'block/[^ ]*' | sed 's/^block\///' | grep -v -- "-$me-" | head -1`
+	if [ -n "$other" ]; then
+		echo "`date '+%H:%M:%S'` ciscsirelease $me: target $t kept: it maps $other of another node (r10q F8)" >> /root/cstop.log
+		continue
+	fi
 	timeout 30 targetcli /iscsi delete $t >/dev/null 2>&1 && echo "`date '+%H:%M:%S'` ciscsirelease $me: target $t removed" >> /root/cstop.log
 done
 timeout 30 targetcli saveconfig >/dev/null 2>&1

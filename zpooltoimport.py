@@ -987,6 +987,7 @@ def decision(pool, why):
  # next time (z2), and nothing said why.  Every assigned pool's decision is logged with a time stamp to
  # /root/zpooltoimport.log when it changes (this runs every 9 s), so the next run shows which test skipped it.
  why = why.replace('\t', ' ').replace('\n', ' ')
+ PASSREC[pool] = why                      # r10q (F7): every pass, also an unchanged reason (passlog)
  d = lastdecisions()
  if d.get(pool) == why:
   return
@@ -1022,6 +1023,38 @@ def importlock():
   f.close()
   return 'nolock'
 
+# QSD5.352 r10q (QC proof 10p F7, z1 534.x): after zfs2's own stop exported PZ, the leader zfs1 did not import it for
+# 328 s ... 13 min and /root/zpooltoimport.log had ONE line for it ('waiting: no member disk ... visible', 17:00:11) until
+# zfs2 came back: decision() logs a reason only when it changes and zpooltoimport.last keeps only the last one, so nobody
+# could see what each pass (every 9 s) saw.  Container flavour: every pass writes one line to /root/zpooltoimport.pass.log
+# (time, node, leader or member, the pools assigned to this node (poolnxt), the leader's candidates, and the reason of
+# every pool decided in this pass, also when it did not change, plus the visible member disks of a waiting pool).
+PASSLOG = '/root/zpooltoimport.pass.log'
+PASSREC = {}
+PASSINFO = {}
+def passlog(started):
+ try:
+  parts = [k+'='+v for k, v in PASSINFO.items()]
+  try:
+   # the iSCSI disks this node sees now (a pool 'waiting' for members: did the partner's disks go away?)
+   parts.append('scsidisks='+str(len([x for x in os.listdir('/dev/disk/by-id') if x.startswith('scsi-3') and '-part' not in x])))
+  except Exception:
+   parts.append('scsidisks=?')
+  told = set()
+  for pool, why in PASSREC.items():
+   parts.append(pool+': '+why[:160])
+   told.add(pool)
+  for pool in PASSINFO.get('nxt', '').split(','):
+   if pool and pool not in told:
+    parts.append(pool+': no decision this pass')
+  line = strftime('%F %T', localtime(started))+' '+str(myhost)+' pass '+str(int(stamp()-started))+'s | '+' | '.join(parts)
+  if os.path.exists(PASSLOG) and os.path.getsize(PASSLOG) > 5000000:
+   os.replace(PASSLOG, PASSLOG+'.1')
+  with open(PASSLOG, 'a') as f:
+   f.write(line+'\n')
+ except Exception:
+  pass
+
 def zpooltoimport(*args):
  if args and args[0] == 'init':
   return _zpooltoimport(*args)
@@ -1029,11 +1062,15 @@ def zpooltoimport(*args):
  if lock is None:
   print('another import pass runs on this node, this one is skipped')
   return
+ PASSREC.clear(); PASSINFO.clear()
+ started = stamp()
  try:
   return _zpooltoimport(*args)
  finally:
   if lock != 'nolock':
    lock.close()
+  if iscontainer():
+   passlog(started)
 
 def _zpooltoimport(*args):
  global leader, leaderip, myhost, myhostip, etcdip
@@ -1053,6 +1090,9 @@ def _zpooltoimport(*args):
  if 'not reachable' in str(nextpools):
         return
  needtoimport=[ x for x in nextpools if myhost in str(x)] 
+ if iscontainer():
+  PASSINFO['role'] = 'leader' if myhost == leader else 'member'
+  PASSINFO['nxt'] = ','.join(str(x[0]).replace('poolnxt/','') for x in needtoimport if isinstance(x, (list, tuple)) and x)
  allnow = getall(leaderip)
  pools = [v for k,v in allnow['pools'].items()]
  mypools = [v  for v in pools if v['host'] == myhost ]
@@ -1329,6 +1369,8 @@ def _zpooltoimport(*args):
  #pools = [poolinfo[0].split('/')[1]+'_'+poolinfo[1] for poolinfo in pools ]
  activepools = get(leaderip, 'ActPool','--prefix')
  notactivepools = getpoolstoimport()
+ if iscontainer():
+  PASSINFO['leadercand'] = ','.join(str(n.get('name','?')) for n in notactivepools if isinstance(n, dict))
  cpools = pools
  for notpo in notactivepools:
     notpname = notpo['name']
