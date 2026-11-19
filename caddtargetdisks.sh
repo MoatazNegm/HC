@@ -61,6 +61,14 @@ if [ -s /root/loopdisks ] && is_container 2>/dev/null; then
 		for a in "${alloweddisks[@]}"; do [ "$d" = "$a" ] && keep+=($d); done
 	done
 	disks=("${keep[@]}")
+else
+	# QSD5.352 fix19 (QC 631, same cause as QC 630 verdict-6113): on a physical / VirtualBox node 'bootdisk=sd' removed
+	# every disk, so a disk added while the node runs (a 1 GB cache disk, a replacement disk) was never exported until the
+	# next reboot.  Here: the whole disks of this node except the root disk, CD-ROMs, LIO disks of the partners, ZFS volumes,
+	# loop / zram / nbd devices.  Creating a backstore that already exists fails harmlessly, as before.
+	rootdisk=`lsblk -no pkname "$(findmnt -no SOURCE / 2>/dev/null)" 2>/dev/null | head -1`
+	[ -z "$rootdisk" ] && rootdisk=sda
+	disks=(`lsblk -dn -o name,vendor | grep -v LIO | awk '{print $1}' | grep -vx "$rootdisk" | grep -vE '^(sr|zd|loop|zram|nbd)'`)
 fi
 nodes=(`docker exec etcdclient /TopStor/etcdgetlocal.py Active --prefix | awk -F'Partners/' '{print $2}' | awk -F"'" '{print $1}'`)
 diskids=`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 | grep -v LIO | awk '{print $1" "$2}'`
