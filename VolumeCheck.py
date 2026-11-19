@@ -300,6 +300,17 @@ def lunretry(st, vol, now):
  st[vol] = [n+1, now, now if log else lastlog]
  return True, log
 
+def lunprune(st, vols):
+ # r10q fix pass (validator G-6b): drop the lunretry() entries of volumes that are no longer in this pass's list (vols =
+ # the 'pool/volume/...' lines of getvols.sh iscsi): moved to the other node by a take over, or deleted.  Before, an
+ # entry was removed only when its volume was seen mapped HERE again, so a former owner kept it for ever.
+ # Returns True when an entry was dropped (the state file is written then).
+ have = set('/'.join(x.split('/')[0:2]) for x in vols)
+ gone = [k for k in st if k not in have]
+ for k in gone:
+  del st[k]
+ return len(gone) > 0
+
 def iscsi(etcds, replis):
  global leader, leaderip, myhost, myhostip, etcdip
  cmdline = 'targetcli ls '
@@ -315,6 +326,7 @@ def iscsi(etcds, replis):
     lst = json.load(f)
   except Exception:
    lst = {}
+  lchg = lunprune(lst, result)
  for res in result:
   reslist=res.split('/')
   print('reslist1',reslist[1])
