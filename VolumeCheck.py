@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import subprocess,sys, os, datetime
+import subprocess,sys, os, datetime, socket
 from etcdgetpy import etcdget as get
 from etcdput import etcdput as put 
 from etcddel import etcddel as dels 
@@ -260,9 +260,13 @@ def homes(etcds, replis, dockers):
  runbygroup(sorted(dirtyset), lambda r: r.split('/')[7], one)
 
 
-def lunmapped(targets, name, ipaddr):
+def lunmapped(targets, name, ipaddr, host=None):
  # True when the target iqn.2016-03.com.<ip without dots>:data in the 'targetcli ls' text has a LUN 'block/<..>-<name>'
  # (r10q F8).  The tree is indented: the target's part ends at the next line of the same or a smaller indent.
+ # r10q fix pass (validator G-5): with host, only a LUN of THIS node's backstore 'block/zdN-<host>-<name>' counts
+ # (addzfsvolumeastarget.sh names it <disk>-`hostname -s`-<vol>); a stale LUN of another node's backstore of the same
+ # volume name no longer passes as mapped.
+ want = '-'+name if not host else '-'+host+'-'+name
  iqn = 'iqn.2016-03.com.'+ipaddr.replace('.','')+':data'
  inside = False
  depth = 0
@@ -275,9 +279,26 @@ def lunmapped(targets, name, ipaddr):
   if line[pos+3:].startswith(iqn+' '):
    inside, depth = True, pos
    continue
-  if inside and ' lun' in line[pos:pos+8] and ('block/' in line) and ('-'+name+' ' in line or '-'+name+')' in line):
+  if inside and ' lun' in line[pos:pos+8] and ('block/' in line) and (want+' ' in line or want+')' in line):
    return True
  return False
+
+LUNRETRY = '/root/volumecheck.lunretry.json'
+def lunretry(st, vol, now):
+ # r10q fix pass (validator G-6): back-off of the 'no LUN' re-export of one volume (VolumeCheck runs every ~10 s and a
+ # volume that cannot be exported was re-run through iscsi.py at every pass).  st = {vol: [tries, last try, last log]}.
+ # The first 3 tries run at once; then one try every 60 s x (tries-2), at most every 10 min.  A try more than one hour
+ # after the last one starts again from 0.  The first try is logged, later tries at most once an hour.
+ # Returns (due, log); st is updated when due.
+ n, last, lastlog = st.get(vol, [0, 0, 0])
+ if now - last > 3600:
+  n = 0
+ wait = 0 if n < 3 else min(600, 60*(n-2))
+ if now - last < wait:
+  return False, False
+ log = n == 0 or now - lastlog >= 3600
+ st[vol] = [n+1, now, now if log else lastlog]
+ return True, log
 
 def iscsi(etcds, replis):
  global leader, leaderip, myhost, myhostip, etcdip
@@ -286,6 +307,14 @@ def iscsi(etcds, replis):
  cmdline = '/TopStor/getvols.sh iscsi'
  result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split('\n')
  result = [x for x in result if 'pdhc' in x]
+ container = os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')
+ lst, lchg = {}, False
+ if container:
+  try:
+   with open(LUNRETRY) as f:
+    lst = json.load(f)
+  except Exception:
+   lst = {}
  for res in result:
   reslist=res.split('/')
   print('reslist1',reslist[1])
@@ -298,15 +327,29 @@ def iscsi(etcds, replis):
   # QSD5.352 r10q (QC proof 10p F8, 554.1/554.2): the target of an address was deleted while the backstores of its volumes
   # stayed: the volume name was still 'in targets' (the backstore line) and nothing was repaired for 40+ min.  Container
   # flavour: a volume is also re-exported when no LUN of the target of its address maps its backstore.
-  if not missing and len(reslist) > 2 and (os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')):
-   missing = not lunmapped(targets, reslist[1], reslist[2])
+  if not missing and len(reslist) > 2 and container:
+   missing = not lunmapped(targets, reslist[1], reslist[2], socket.gethostname().split('.')[0])
+   key = reslist[0]+'/'+reslist[1]
    if missing:
-    with open('/root/iscsitarget.log','a') as flog:
-     flog.write(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+reslist[0]+'/'+reslist[1]+' VolumeCheck: no LUN of iqn.2016-03.com.'+reslist[2].replace('.','')+':data maps its backstore: exported again (r10q F8)\n')
+    missing, log = lunretry(lst, key, int(stamp()))
+    lchg = lchg or missing
+    if log:
+     with open('/root/iscsitarget.log','a') as flog:
+      flog.write(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+key+' VolumeCheck: no LUN of iqn.2016-03.com.'+reslist[2].replace('.','')+':data maps its backstore: exported again (r10q F8), try '+str(lst[key][0])+' (later tries back off, logged once an hour)\n')
+   elif key in lst:
+    del lst[key]
+    lchg = True
   if missing:
    print(reslist)
    cmdline='/TopStor/iscsi.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[2]+' '+reslist[3]+' ISCSI '+reslist[4]+' '+reslist[5]+' '+reslist[6]+' '+reslist[7]
    result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+ if lchg:
+  try:
+   with open(LUNRETRY+'.new','w') as f:
+    json.dump(lst, f)
+   os.replace(LUNRETRY+'.new', LUNRETRY)
+  except Exception:
+   pass
 
 def _runto(cmd, timeout=10, out=True):
     # r9b (validator r9 V7): (returncode, stdout) or None when the command did not end in <timeout> s.  The child is killed
