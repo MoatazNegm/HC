@@ -620,6 +620,11 @@ def spare2(*args):
         print('raid:',pool)
         if allinfo['raids'][raid]['changeop'] in ['ONLINE']:
             continue
+        # QSD5.352 fix20 (QC 631, verdict-6120): a lost read cache (l2arc), log or spare device is not a lost data leg.
+        # After a take-over the owner's UNAVAIL cache disk came here as a 'degraded raid' and the replace logic hit the
+        # mirror's healthy leg.  fixcachelocality.py relocates the cache; nothing to do for these here.
+        if str(raid).split('_')[0].split('-')[0] in ('cache', 'log', 'logs', 'spare', 'spares'):
+            continue
         for disk in allinfo['raids'][raid]['disklist']:
             if disk['changeop'] not in ['free','ONLINE']:
                 print('iamhere',disk['name'])
