@@ -5,6 +5,9 @@
 # disks over.  For a loop device the identity is its backing file; otherwise the device name.
 diskserial() {
 	ident=`losetup -n -O BACK-FILE /dev/$1 2>/dev/null | tr -d ' '`
+	# QSD5.352 fix19b (QC 631): a non-loop disk is identified by its own hardware serial.  The device name alone gave
+	# two different disks the same SCSI id when two nodes call their disk by the same name (both VMs' new 1 GB disk = sdh).
+	[ -z "$ident" ] && ident=`lsblk -dno serial /dev/$1 2>/dev/null | tr -d ' '`
 	[ -z "$ident" ] && ident=$1
 	echo -n "$ident" | md5sum | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\).*/\1-\2-\3-\4-\5/'
 }
