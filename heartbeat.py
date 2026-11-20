@@ -80,11 +80,13 @@ def hblog(msg):
  except Exception:
   pass
 
-def hostanswers(host, rounds=1):
+def hostanswers(host, rounds=1, cluster=True):
  # ('alive'|'dead'|'unknown', reasons).  The leader is also probed on the cluster ip (skipped by hostalive.sh when the
  # address is on this node itself).  A hostalive.sh that fails or hangs gives 'unknown'.
+ # r10r3 (validator r10r2 V-3): cluster=False probes the node ip only (the probe loop has just failed CLOSTTRIES rounds
+ # on the cluster ip; probing it again only delays a genuine take-over).
  targets = [NODEIPS.get(host, '-')]
- if host == leader and str(leaderip):
+ if cluster and host == leader and str(leaderip):
   targets.append(str(leaderip))
  state, why = 'unknown', []
  for i, ip in enumerate(targets):
@@ -311,10 +313,11 @@ def hostlost(host, hostip, checked=False):
                 ctr = iscontainer()
                 if ctr and not checked:
                         # r10r2 (candidate A): one more probe of the host itself before anything is deleted
-                        state, why = hostanswers(host, 1)
+                        state, why = hostanswers(host, 1, cluster=False)      # r10r3 V-3: node ip only
                         if state == 'alive':
                                 hblog(str(host)+' '+str(hostip)+' not taken for lost, it answers: '+why+' (r10r2)')
                                 return
+                        hblog(str(host)+' '+str(hostip)+' lost, one probe of its node ip: '+state+' ('+why+') (r10r3)')
                 oldleader = leader
                 with open('/root/heartproblem','a') as f:
                         f.write('nmap:\n'+host+' '+hostip)
@@ -402,6 +405,11 @@ def hostlost(host, hostip, checked=False):
                 if ctr:
                     cmdline += ' '+NODEIPS.get(host, '-')        # r10r2: the lost host's node ip for hostlost.sh's guard
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+                if ctr and 'HOSTLOST REFUSED' in result:
+                    # r10r3 (validator r10r2 V-5): hostlost.sh found the host answering (its own probe, a race with this
+                    # one): it deleted nothing, so its ready/running/host/known/vol keys stay too
+                    hblog('hostlost.sh refused '+str(host)+': '+' '.join(l for l in result.split('\n') if 'HOSTLOST REFUSED' in l)[:300]+'; its etcd keys are kept')
+                    return
                 dels(etcd,'ready/',host)
                 dels(etcd, 'running/', host)
                 dels(etcd, 'host', host)
@@ -444,7 +452,19 @@ def heartbeat(*args):
                 tries = 10
                 break
             tries +=1
-        if len(knowns) == knownsn and knownsn == 1:
+        if iscontainer() and tries == 10:
+            # r10r2: node ip of every ready host (hostalive.sh probes it), own-etcd failure count back to 0
+            # r10r3 (validator r10r2 V-6): before the one-host check, so a good one-host read resets the count too
+            for k in knowns:
+                if _readyhost(k) and 'dhcp' in _readyhost(k):
+                    NODEIPS[_readyhost(k)] = str(k[1])
+            if OWNFAIL['first']:
+                hblog('own etcd at '+str(etcd)+' answers again after '+str(int(stamp() - OWNFAIL['first']))+' s ('+str(OWNFAIL['passes'])+' failed passes)')
+                OWNFAIL['first'], OWNFAIL['passes'] = 0.0, 0
+        # r10r3 (validator r10r2 V-6), container flavour: a FAILED read (etcdget gives ['_1'] on a timeout) is not "one
+        # host running": it goes on to the own-etcd window below, so failed passes are counted (before, every second failed
+        # pass stopped here and the window could never fill).
+        if len(knowns) == knownsn and knownsn == 1 and (tries == 10 or not iscontainer()):
             print('only one host is running..,,will do nothing')
             continue
         knownsn = len(knowns)
@@ -456,14 +476,6 @@ def heartbeat(*args):
         if iscontainer() and myhost != leader:
             knowns = sorted(knowns, key=lambda k: 0 if _readyhost(k) == leader else 1)
             print('probe order', [_readyhost(k) for k in knowns])
-        if iscontainer() and tries == 10:
-            # r10r2: node ip of every ready host (hostalive.sh probes it), own-etcd failure count back to 0
-            for k in knowns:
-                if _readyhost(k) and 'dhcp' in _readyhost(k):
-                    NODEIPS[_readyhost(k)] = str(k[1])
-            if OWNFAIL['first']:
-                hblog('own etcd at '+str(etcd)+' answers again after '+str(int(stamp() - OWNFAIL['first']))+' s ('+str(OWNFAIL['passes'])+' failed passes)')
-                OWNFAIL['first'], OWNFAIL['passes'] = 0.0, 0
         if tries < 10:
            if notmyself(leader, "its own etcd answered 'ready' without a node 8 times"):
                continue

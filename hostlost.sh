@@ -11,6 +11,7 @@ echo $@ `date` > /root/hostlost
 if is_container 2>/dev/null && [ -n "`echo $@ | awk '{print $5}'`" ] && [ "`echo $@ | awk '{print $5}'`" = "`echo $@ | awk '{print $3}'`" ]
 then
 	echo "`date '+%F %T'` hostlost.sh $@: refused, the lost host is this node itself (r10i)" >> /root/hostlostrefused.log
+	echo "HOSTLOST REFUSED: the lost host is this node itself"
 	exit 0
 fi
 # QSD5.352 r10r2 (QC proof r10r, candidate A): never for a host that answers.  A follower whose own etcd stalled took the
@@ -18,13 +19,22 @@ fi
 # and closthost.sh removed its iSCSI target and backstores (3 pools DEGRADED).  Container flavour: hostalive.sh (6th
 # argument = the host's node ip from heartbeat.py, else the portal of its target, else its ready/ record), one round;
 # a host that answers is refused and logged, nothing is deleted.
+# r10r3 (validator r10r2 V-2): an explicit EVACUATION (Evacuatebyleader.py, Evacuatelocal.py) removes a host that is
+# normally still running, on purpose: HOSTLOST_FORCE=evacuate skips this guard (logged) and is inherited by closthost.sh.
+# The heartbeat and hostdown paths keep the guard.  (V-5) a refusal also prints 'HOSTLOST REFUSED' on stdout: heartbeat.py
+# then keeps the host's etcd keys.
 hlhost=`echo $@ | awk '{print $5}'`; hlip=`echo $@ | awk '{print $6}'`; hlmyip=`echo $@ | awk '{print $4}'`
-if is_container 2>/dev/null && [ -n "$hlhost" ]
+if is_container 2>/dev/null && [ -n "$hlhost" ] && [ "$HOSTLOST_FORCE" = "evacuate" ]
+then
+	echo "`date '+%F %T'` hostlost.sh $@: evacuation: guard skipped (HOSTLOST_FORCE=evacuate, r10r3)" >> ${HOSTLOST_REFUSED_LOG:-/root/hostlostrefused.log}
+	export HOSTLOST_FORCE
+elif is_container 2>/dev/null && [ -n "$hlhost" ]
 then
 	hlwhy=`${HOSTALIVE:-/pace/hostalive.sh} $hlhost "${hlip:--}" "${hlmyip:--}" 1`
 	if [ $? -eq 0 ]
 	then
 		echo "`date '+%F %T'` hostlost.sh $@: refused, the host answers ($hlwhy) (r10r2)" >> ${HOSTLOST_REFUSED_LOG:-/root/hostlostrefused.log}
+		echo "HOSTLOST REFUSED: the host answers ($hlwhy)"
 		exit 0
 	fi
 fi

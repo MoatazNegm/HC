@@ -24,8 +24,11 @@ log "start"
 # 3 pools DEGRADED) and its busy pools were nearly exported.  hostalive.sh (2nd argument = the host's node ip, else the
 # portal of its target), one round: a host that answers is refused, nothing is touched.  Checked again right before
 # each pool export (the wait for the disks can take minutes; a node may have come back meanwhile).
-alive() { hawhy=`${HOSTALIVE:-/pace/hostalive.sh} $lost "${lostip:--}" - 1`; }
+# r10r3 (validator r10r2 V-2): an explicit EVACUATION (HOSTLOST_FORCE=evacuate, inherited from hostlost.sh) removes a
+# host that is still running on purpose: both alive checks are skipped (logged).
+alive() { [ "$HOSTLOST_FORCE" = "evacuate" ] && return 1; hawhy=`${HOSTALIVE:-/pace/hostalive.sh} $lost "${lostip:--}" - 1`; }
 lostip=$2
+[ "$HOSTLOST_FORCE" = "evacuate" ] && hawhy="evacuation: alive checks skipped (HOSTLOST_FORCE=evacuate, r10r3)"
 if alive; then
 	log "refused: $lost answers ($hawhy) -- no target, backstore, session or pool touched (r10r2)"
 	exit 0

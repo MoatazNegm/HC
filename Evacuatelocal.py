@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import subprocess,sys, datetime
+import subprocess,sys, datetime, os
 from etcddel import etcddel as deli 
 from etcdput import etcdput as put 
 
@@ -69,7 +69,9 @@ def setall(hostn,*arg):
     cmdline=['/pace/removetargetdisks.sh', hostn, hostip]
     result=subprocess.run(cmdline,stdout=subprocess.PIPE)
     cmdline=['/pace/hostlost.sh',leader, leaderip, myhost, myip, hostn]
-    result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+    # QSD5.352 r10r3 (validator r10r2 V-2): an evacuation removes a host that is still running on purpose; hostlost.sh and
+    # closthost.sh skip their 'the host answers' guards (container flavour) only for HOSTLOST_FORCE=evacuate
+    result=subprocess.run(cmdline,stdout=subprocess.PIPE,env=dict(os.environ, HOSTLOST_FORCE='evacuate'))
     delhostkeys(myip, hostn)
     if leader == myhost and leaderip and leaderip != myip:
      delhostkeys(leaderip, hostn)      # the leader's cluster etcd is the one every node copies
