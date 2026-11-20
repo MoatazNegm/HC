@@ -26,6 +26,16 @@ then
 fi
 echo /TopStor/docker_primary.sh $leader $myhostip $leaderip $clusterip
 /TopStor/docker_primary.sh $leader $myhostip $leaderip $clusterip
+# QSD5.352 r10r (QC proof 10q S-3, x2 575.4), container flavour: the new leader's schedule table (crontab, the lines
+# that post the scheduled snapshots) was never rebuilt after a take-over, so a short table of this node (Hourly/Minutely
+# lines lost) stayed and those snapshots stopped.  Once the etcd at the cluster address answers (3 min at most), the
+# table is rebuilt from the Snapperiod records here (etctocron.py keeps the old table when the read fails).
+[ -f /TopStor/flavor.sh ] && . /TopStor/flavor.sh
+if is_container 2>/dev/null; then
+ ( n=0; until ETCDCTL_API=3 timeout 10 etcdctl --endpoints=http://$leaderip:2379 get leader >/dev/null 2>&1 || [ $n -ge ${ETCTOCRON_WAITS:-36} ]; do sleep 5; n=$((n+1)); done
+   echo "`date '+%F %T'` leaderlost.sh: take-over by $myhost, schedule table rebuilt now (etcd wait $((n*5)) s)" >> ${ETCTOCRON_LOG:-/root/etctocron.log}
+   cd /pace && /usr/bin/python3 ${ETCTOCRON_PY:-/pace/etctocron.py} $leaderip ) >/dev/null 2>&1 </dev/null &
+fi
 # The monitoring stack (prometheus + grafana are recreated, ~60 s) is started in the background, and only once the API
 # answers (60 s at most): run in line it kept the heartbeat from finishing the take over (hostdown sync, clean up of the
 # lost leader) for a minute, and its disk load made the API start take ~27 s instead of ~1 s.

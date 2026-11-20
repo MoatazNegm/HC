@@ -65,6 +65,35 @@ def getnextlead():
  return nextleader , nextleaderip
 
 readyseen = None
+# QSD5.352 r10r (QC proof 10q S-2): the leader re-posted the UNCHANGED sync/nextlead/Add_er_<follower>::<ip> item with a
+# new stamp every few minutes under load (r10q x1 18:23:35, x2 19:40); each re-post must be acked by the follower (60-85 s
+# at load ~20), so isinsync flapped to 'no'.  Two load-made triggers in leadernextlead(): (1) the read of nextlead/er
+# failed (etcdget gives '_1' when etcdctl does not answer) so the stored value looked different and was put and posted
+# again; (2) one 'ready' read without the follower's record made it a NEW ready node in the next pass (readyseen keeps
+# only the last pass).  Container flavour: (1) a failed read skips the pass (a missing key is still written), (2) a node
+# is new only when it was not seen for READYGRACE s.  Every post is logged with its reason in NEXTLEADLOG.
+READYGRACE = 90
+NEXTLEADLOG = '/root/nextlead.log'
+readylast = {}
+
+def nlog(msg):
+ try:
+  with open(NEXTLEADLOG, 'a') as f:
+   f.write(str(int(stamp()))+' '+msg+'\n')
+ except Exception:
+  pass
+
+def readkey(ip, key, tmo=10):
+ # (True, value) or (True, '') for a missing key; (False, '') when etcdctl did not answer
+ try:
+  r = subprocess.run(['timeout', str(tmo), 'etcdctl', '--endpoints=http://'+str(ip)+':2379', 'get', key],
+                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=dict(os.environ, ETCDCTL_API='3'))
+ except Exception:
+  return False, ''
+ if r.returncode != 0:
+  return False, ''
+ lines = r.stdout.decode('utf-8', 'replace').split('\n')
+ return True, (lines[1].strip() if len(lines) > 1 and lines[0].strip() == key else '')
 leadernext = ''        # follower: the last nextlead/er '<host>/<ip>' read from the leader's etcd (see followernextlead)
 nextcheck = 0
 
@@ -153,13 +182,34 @@ def leadernextlead(knowns):
  global etcd, leader ,leaderip, myhost, myhostip, readyseen
  others = [ (k[0].split('/')[1], str(k[1])) for k in knowns if 'ready/' in str(k[0]) and k[0].split('/')[1] != myhost ]
  names = [ o[0] for o in others ]
- new = [] if readyseen is None else [ o for o in others if o[0] not in readyseen ]
+ ctr = iscontainer()
+ if ctr:
+  now = stamp()
+  # r10r (S-2): new = not seen for READYGRACE s (a node that returns was away for minutes; one read without it is not a return)
+  new = [] if readyseen is None else [ o for o in others if now - readylast.get(o[0], 0) > READYGRACE ]
+  for o in others:
+   readylast[o[0]] = now
+ else:
+  new = [] if readyseen is None else [ o for o in others if o[0] not in readyseen ]
  readyseen = set(names)
  for host, ip in new:
   nodeevent('Partsu01', 'info', host, ip)
  if len(others) == 0:
   return
- current = str(get(leaderip,'nextlead/er')[0])
+ if ctr:
+  ok, current = readkey(leaderip, 'nextlead/er')
+  if not ok:
+   print('nextlead/er not readable on', leaderip, 'pass skipped')
+   nlog('nextlead/er not readable on '+str(leaderip)+': no post in this pass (new ready nodes '+str([n[0] for n in new])+')')
+   if new:
+    readyseen = readyseen - set(n[0] for n in new)      # their post is not lost: they stay new for the next pass
+    for n in new:
+     readylast.pop(n[0], None)
+   return
+  if current == '':
+   current = '_1'                                   # a missing key, as etcdget gave it
+ else:
+  current = str(get(leaderip,'nextlead/er')[0])
  curhost, curip = splitnext(current)
  if len(new) > 0:
   choice = new[-1]
@@ -175,6 +225,8 @@ def leadernextlead(knowns):
  if current == value and len(new) == 0:
   return
  print('next leader is now', value, 'it was', current, 'new ready nodes', [ n[0] for n in new ])
+ if ctr:
+  nlog('post sync/nextlead/Add_er_'+choice[0]+'::'+choice[1]+': '+('value changed from '+str(current) if current != value else 'same value')+(', new ready nodes '+str([n[0] for n in new]) if new else ''))
  put(leaderip, 'nextlead/er', value)
  dels(leaderip,'sync/nextlead/Add_er','--prefix')
  dosync('sync/nextlead/Add_er_'+choice[0]+'::'+choice[1]+'/request','nextlead_'+str(stamp()))
@@ -253,6 +305,13 @@ def hostlost(host, hostip):
                 dels(etcd, 'vol',host)
                 dels(etcd, 'sync/hostdown',host)
 
+def _readyhost(known):
+    # the host of a 'ready/<host>' record ('' when the record has another form)
+    try:
+        return str(known[0]).split('/')[1]
+    except (IndexError, TypeError):
+        return ''
+
 def heartbeat(*args):
     global etcd, leader ,leaderip, myhost, myhostip
     cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leader'
@@ -285,6 +344,14 @@ def heartbeat(*args):
             print('only one host is running..,,will do nothing')
             continue
         knownsn = len(knowns)
+        # QSD5.352 r10r (QC proof 10q S-4, x3 522.1/522.2), container flavour: the probe pass handles the FIRST host that
+        # does not answer and then starts again, so every stale 'ready/<host>' record of an earlier build (no node behind
+        # it) cost one full pass (CLOSTTRIES rounds + hostlost/closthost, 40 s .. 4 min under load) BEFORE the real lost
+        # leader: zfs2 18:02-18:08 ran closthost for four old-build hosts and only at 18:08:46 for the stopped leader (UI
+        # +12 min).  A follower now probes the leader first; the order of the other hosts is unchanged.
+        if iscontainer() and myhost != leader:
+            knowns = sorted(knowns, key=lambda k: 0 if _readyhost(k) == leader else 1)
+            print('probe order', [_readyhost(k) for k in knowns])
         if tries < 10: 
            if notmyself(leader, "its own etcd answered 'ready' without a node 8 times"):
                continue
