@@ -56,6 +56,78 @@ def notmyself(host, why):
    pass
  return True
 
+# QSD5.352 r10r2 (QC proof r10r, candidate A: false take-over loop, 3 pools DEGRADED).  Container flavour.
+# A follower whose OWN etcd gave no 'ready' node in one pass (8 reads of 2 s under host load 22-36, ~16 s) took the LIVE
+# leader for lost without probing it (the 'tries < 10' branch): leaderlost.sh -> docker_primary.sh took the cluster ip,
+# hostlost.sh deleted the leader's SCSI devices from the shared kernel, closthost.sh removed its iSCSI target and tried to
+# export its pools; 32 take-overs in 90 min.  Now: (1) the own etcd must fail for OWNFAILSECS s and OWNFAILPASSES passes
+# in a row, (2) then the leader is probed (hostalive.sh: its node ip, the portal of its target, the cluster ip held
+# elsewhere; CLOSTTRIES rounds) and only a leader that does not answer is taken for lost; (3) hostlost() checks every lost
+# host once more (one round) before anything is deleted, and leaderlost.sh / hostlost.sh / closthost.sh refuse a host
+# that answers (second guards).  The node ip of every host is kept from the last good 'ready' read (NODEIPS).
+HOSTALIVE = '/pace/hostalive.sh'
+NODEIPS = {}
+OWNFAILSECS = 60
+OWNFAILPASSES = 3
+OWNFAILPAUSE = 5
+OWNFAIL = {'first': 0.0, 'passes': 0, 'logged': 0.0}
+
+def hblog(msg):
+ try:
+  from datetime import datetime
+  with open('/root/heartproblem','a') as f:
+   f.write('\n'+datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' '+str(myhost)+' '+msg+'\n')
+ except Exception:
+  pass
+
+def hostanswers(host, rounds=1):
+ # ('alive'|'dead'|'unknown', reasons).  The leader is also probed on the cluster ip (skipped by hostalive.sh when the
+ # address is on this node itself).  A hostalive.sh that fails or hangs gives 'unknown'.
+ targets = [NODEIPS.get(host, '-')]
+ if host == leader and str(leaderip):
+  targets.append(str(leaderip))
+ state, why = 'unknown', []
+ for i, ip in enumerate(targets):
+  try:
+   r = subprocess.run([HOSTALIVE, host, ip, str(etcd) if etcd else '-', str(rounds if i == 0 else 1)],
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=40 + 10 * rounds)
+   rc, out = r.returncode, r.stdout.decode('utf-8', 'replace').strip().replace('\n', ' ')
+  except Exception as e:
+   rc, out = 3, 'hostalive.sh did not answer: '+str(e)[:80]
+  why.append(out)
+  if rc == 0 and 'ALIVE' in out:          # its answer line, not only the exit code
+   return 'alive', ' | '.join(why)
+  if rc == 1:
+   state = 'dead'
+ return state, ' | '.join(why)
+
+def owntakeover():
+ # the 'tries < 10' branch (own etcd gave no ready node): True only when the leader may be taken for lost
+ now = stamp()
+ if not OWNFAIL['first']:
+  OWNFAIL['first'], OWNFAIL['passes'] = now, 0
+ OWNFAIL['passes'] += 1
+ span = int(now - OWNFAIL['first'])
+ if span < OWNFAILSECS or OWNFAIL['passes'] < OWNFAILPASSES:
+  if OWNFAIL['passes'] == 1:
+   hblog("own etcd at "+str(etcd)+" gave no ready node: no take-over before "+str(OWNFAILSECS)+" s and "+str(OWNFAILPASSES)+" failed passes (r10r2)")
+  sleep(OWNFAILPAUSE)
+  return False
+ state, why = hostanswers(leader, CLOSTTRIES)
+ if state == 'dead':
+  hblog("own etcd at "+str(etcd)+" gave no ready node for "+str(span)+" s ("+str(OWNFAIL['passes'])+" passes) and the leader "+str(leader)+" does not answer: "+why+"; host-lost path")
+  OWNFAIL['first'] = 0.0
+  return True
+ if now - OWNFAIL['logged'] >= 60:
+  OWNFAIL['logged'] = now
+  try:
+   port = subprocess.run(['timeout', '10', 'docker', 'port', 'etcd'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.decode('utf-8', 'replace').strip().replace('\n', ', ')
+  except Exception:
+   port = '?'
+  hblog("own etcd unreadable but leader "+str(leader)+" "+('alive' if state == 'alive' else 'not provably lost')+" ("+why+"); no take-over, read again (failed "+str(span)+" s, "+str(OWNFAIL['passes'])+" passes; docker port etcd: "+port+")")
+ sleep(OWNFAILPAUSE)
+ return False
+
 def getnextlead():
  # read only: a node never announces itself, the leader names the next leader and syncs it to every node
  global etcd, leader ,leaderip, myhost, myhostip, nextleader, nextleaderip
@@ -232,10 +304,18 @@ def leadernextlead(knowns):
  dels(leaderip,'sync/nextlead/Add_er','--prefix')
  dosync('sync/nextlead/Add_er_'+choice[0]+'::'+choice[1]+'/request','nextlead_'+str(stamp()))
 
-def hostlost(host, hostip):
+def hostlost(host, hostip, checked=False):
                 global etcd, leader ,leaderip, myhost, myhostip, nextleader, nextleaderip
                 if notmyself(host, 'host-lost path asked for this node itself'):
                         return
+                ctr = iscontainer()
+                if ctr and not checked:
+                        # r10r2 (candidate A): one more probe of the host itself before anything is deleted
+                        state, why = hostanswers(host, 1)
+                        if state == 'alive':
+                                hblog(str(host)+' '+str(hostip)+' not taken for lost, it answers: '+why+' (r10r2)')
+                                return
+                oldleader = leader
                 with open('/root/heartproblem','a') as f:
                         f.write('nmap:\n'+host+' '+hostip)
 
@@ -267,7 +347,28 @@ def hostlost(host, hostip):
                         put(myhostip,'leader',leader)
                     if myhost == nextleader:
                         cmdline='/pace/leaderlost.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+nextleader+' '+nextleaderip+' '+clusterip+' '+host
-                        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+                        if ctr:
+                            # r10r2: the lost leader's node ip (9th) and 'already probed' for leaderlost.sh's own guard
+                            cmdline += ' '+NODEIPS.get(host, '-')
+                            result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,env=dict(os.environ, HOSTALIVE_CHECKED=host)).decode('utf-8')
+                            if 'TAKEOVER REFUSED' in result or 'TAKEOVER BUSY' in result:
+                                hblog('leaderlost.sh did not take over from '+str(host)+': '+' '.join(l for l in result.split('\n') if 'TAKEOVER' in l)[:300]+'; leader stays '+str(oldleader))
+                                leader = oldleader
+                                put(myhostip,'leader',oldleader)
+                                return
+                            # r10r2 (F2): the leader key on this node's own etcd (published on the node ip and the cluster ip
+                            # by docker_primary.sh now): put and read back; in r10r the put went to an etcd that no longer
+                            # answered on the node ip, the key kept the old leader and the next pass took over again
+                            okread, val = False, ''
+                            for i in range(3):
+                                put(myhostip,'leader',leader)
+                                okread, val = readkey(myhostip, 'leader')
+                                if okread and val == leader:
+                                    break
+                                sleep(2)
+                            hblog('take-over from '+str(host)+': leader key on '+str(myhostip)+' reads '+(repr(val) if okread else 'nothing (no answer)')+(' OK' if okread and val == leader else ' NOT '+str(leader)))
+                        else:
+                            result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
                         etcd = leaderip
                         dels(leaderip, 'sync/hostdown/'+host,'--prefix')
                         put(leaderip,'sync/hostdown/'+host+'_/request','hostdown_'+stampit)
@@ -298,6 +399,8 @@ def hostlost(host, hostip):
                         nodeevent('Partst02', 'warning', host)
                 dels(etcd, 'cpuperf/'+host)
                 cmdline='/pace/hostlost.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+host
+                if ctr:
+                    cmdline += ' '+NODEIPS.get(host, '-')        # r10r2: the lost host's node ip for hostlost.sh's guard
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
                 dels(etcd,'ready/',host)
                 dels(etcd, 'running/', host)
@@ -353,8 +456,22 @@ def heartbeat(*args):
         if iscontainer() and myhost != leader:
             knowns = sorted(knowns, key=lambda k: 0 if _readyhost(k) == leader else 1)
             print('probe order', [_readyhost(k) for k in knowns])
-        if tries < 10: 
+        if iscontainer() and tries == 10:
+            # r10r2: node ip of every ready host (hostalive.sh probes it), own-etcd failure count back to 0
+            for k in knowns:
+                if _readyhost(k) and 'dhcp' in _readyhost(k):
+                    NODEIPS[_readyhost(k)] = str(k[1])
+            if OWNFAIL['first']:
+                hblog('own etcd at '+str(etcd)+' answers again after '+str(int(stamp() - OWNFAIL['first']))+' s ('+str(OWNFAIL['passes'])+' failed passes)')
+                OWNFAIL['first'], OWNFAIL['passes'] = 0.0, 0
+        if tries < 10:
            if notmyself(leader, "its own etcd answered 'ready' without a node 8 times"):
+               continue
+           if iscontainer():
+               # r10r2 (candidate A): failed reads over OWNFAILSECS s, then the leader is probed; a live leader is kept
+               if not owntakeover():
+                   continue
+               hostlost(leader, leaderip, checked=True)
                continue
            hostlost(leader, leaderip)
         elif myhost == leader:

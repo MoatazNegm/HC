@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# closthost.sh <lost host>  -- CONTAINER flavour only (called by hostlost.sh when is_container).
+# closthost.sh <lost host> [<its node ip>]  -- CONTAINER flavour only (called by hostlost.sh when is_container).
 #
 # When a physical server dies, everything it held dies with it: its iSCSI target, the pools it had imported.
 # A container that dies leaves all of that behind in the kernel it shared with the other nodes:
@@ -19,6 +19,18 @@ log() { echo "`date '+%H:%M:%S'` closthost $lost: $*" >> /root/closthost.log; }
 exec 9>/tmp/closthost.lock
 flock -n 9 || { log "another run is in progress"; exit 0; }
 log "start"
+# QSD5.352 r10r2 (QC proof r10r, candidate A): never for a host that answers.  A follower whose own etcd stalled ran this
+# script 31 times against the LIVE leader: its iSCSI target and backstores were removed (the leader's pools lost legs:
+# 3 pools DEGRADED) and its busy pools were nearly exported.  hostalive.sh (2nd argument = the host's node ip, else the
+# portal of its target), one round: a host that answers is refused, nothing is touched.  Checked again right before
+# each pool export (the wait for the disks can take minutes; a node may have come back meanwhile).
+alive() { hawhy=`${HOSTALIVE:-/pace/hostalive.sh} $lost "${lostip:--}" - 1`; }
+lostip=$2
+if alive; then
+	log "refused: $lost answers ($hawhy) -- no target, backstore, session or pool touched (r10r2)"
+	exit 0
+fi
+log "host check: $hawhy"
 # pools of the lost host, read before anything is touched
 orphans=`/pace/cpoolowner.sh mine $lost`
 # a pool that is already SUSPENDED cannot be asked for its owner; with its disks gone it is the lost host's by definition
@@ -82,6 +94,10 @@ for p in $orphans; do
 	own=`/pace/cpoolowner.sh of $p`
 	if [ -n "$own" ] && [ "$own" != "-" ] && [ "$own" != "$lost" ]; then
 		log "pool $p: taken over by $own meanwhile -- NOT exported"
+		continue
+	fi
+	if alive; then
+		log "pool $p: $lost answers now ($hawhy) -- NOT exported (r10r2)"
 		continue
 	fi
 	if zpool export $p >> /root/closthost.log 2>&1; then

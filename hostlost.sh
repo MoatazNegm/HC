@@ -13,9 +13,24 @@ then
 	echo "`date '+%F %T'` hostlost.sh $@: refused, the lost host is this node itself (r10i)" >> /root/hostlostrefused.log
 	exit 0
 fi
+# QSD5.352 r10r2 (QC proof r10r, candidate A): never for a host that answers.  A follower whose own etcd stalled took the
+# LIVE leader for lost 32 times: the loop below deleted the leader's real SCSI devices from the kernel the containers share
+# and closthost.sh removed its iSCSI target and backstores (3 pools DEGRADED).  Container flavour: hostalive.sh (6th
+# argument = the host's node ip from heartbeat.py, else the portal of its target, else its ready/ record), one round;
+# a host that answers is refused and logged, nothing is deleted.
+hlhost=`echo $@ | awk '{print $5}'`; hlip=`echo $@ | awk '{print $6}'`; hlmyip=`echo $@ | awk '{print $4}'`
+if is_container 2>/dev/null && [ -n "$hlhost" ]
+then
+	hlwhy=`${HOSTALIVE:-/pace/hostalive.sh} $hlhost "${hlip:--}" "${hlmyip:--}" 1`
+	if [ $? -eq 0 ]
+	then
+		echo "`date '+%F %T'` hostlost.sh $@: refused, the host answers ($hlwhy) (r10r2)" >> ${HOSTLOST_REFUSED_LOG:-/root/hostlostrefused.log}
+		exit 0
+	fi
+fi
 if is_container 2>/dev/null && [ "`echo $@ | awk '{print $1}'`" = "`echo $@ | awk '{print $3}'`" ]
 then
-	setsid nohup /pace/closthost.sh `echo $@ | awk '{print $5}'` >/dev/null 2>&1 </dev/null &
+	setsid nohup /pace/closthost.sh $hlhost $hlip >/dev/null 2>&1 </dev/null &
 fi
 #export PATH=/bin:/usr/bin:/sbin:/usr/sbin:/root
 leader=`echo $@ | awk '{print $1}'`
