@@ -185,8 +185,9 @@ def leadernextlead(knowns):
  ctr = iscontainer()
  if ctr:
   now = stamp()
-  # r10r (S-2): new = not seen for READYGRACE s (a node that returns was away for minutes; one read without it is not a return)
-  new = [] if readyseen is None else [ o for o in others if now - readylast.get(o[0], 0) > READYGRACE ]
+  # r10r (S-2): new = absent in the previous pass AND not seen for READYGRACE s (a node that returns was away for minutes;
+  # one read without it is not a return; a slow leader pass > READYGRACE with the node present in every pass is not one either)
+  new = [] if readyseen is None else [ o for o in others if o[0] not in readyseen and now - readylast.get(o[0], 0) > READYGRACE ]
   for o in others:
    readylast[o[0]] = now
  else:

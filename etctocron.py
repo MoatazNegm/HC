@@ -38,6 +38,10 @@ def etctocron(leaderip, period='--prefix'):
   if lock is not None:
    lock.close()
 
+def iscontainer():
+ # the container flavour (as pace/heartbeat.py): the r10r checked reads apply there only
+ return os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or os.path.isdir('/sys/class/net/eth10')
+
 LOGF = '/root/etctocron.log'
 READTRIES = 3
 READSTEP = 2
@@ -110,23 +114,29 @@ def _etctocron(leaderip, period='--prefix'):
  # on the new leader after a take-over (the table there was never rebuilt).
  cmdline='/bin/crontab -l'
  crons=subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode('utf-8','replace')
- oldsched=set(_callid(x) for x in crons.split('\n') if 'nowhost' in x and len(x) > 5)
- oldsched.discard('')
- ok, etccron = readrecords(leaderip, period)
- if not ok:
-  log('Snapperiod read failed on '+str(leaderip)+' ('+str(READTRIES)+' tries), the old table stays ('+str(len(oldsched))+' schedule lines)')
-  return
- if len(schedids(etccron)) < len(oldsched):
-  time.sleep(READSTEP)
-  ok2, again = readrecords(leaderip, period, 1)
-  if not ok2 or schedids(again) != schedids(etccron):
-   log('Snapperiod read on '+str(leaderip)+' gave '+str(len(schedids(etccron)))+' schedules, the table has '+str(len(oldsched))+'; not confirmed by a second read ('+('failed' if not ok2 else str(len(schedids(again))))+'), the old table stays')
+ # r10r (validator G-2): checked reads in the CONTAINER flavour only; the physical flavour keeps the old path exactly
+ # (drop the schedule lines, then one etcdget read).
+ ctr = iscontainer()
+ if ctr:
+  oldsched=set(_callid(x) for x in crons.split('\n') if 'nowhost' in x and len(x) > 5)
+  oldsched.discard('')
+  ok, etccron = readrecords(leaderip, period)
+  if not ok:
+   log('Snapperiod read failed on '+str(leaderip)+' ('+str(READTRIES)+' tries), the old table stays ('+str(len(oldsched))+' schedule lines)')
    return
-  log('Snapperiod read on '+str(leaderip)+' confirmed: '+str(len(schedids(etccron)))+' schedules, the table had '+str(len(oldsched))+' (deleted ones go)')
+  if len(schedids(etccron)) < len(oldsched):
+   time.sleep(READSTEP)
+   ok2, again = readrecords(leaderip, period, 1)
+   if not ok2 or schedids(again) != schedids(etccron):
+    log('Snapperiod read on '+str(leaderip)+' gave '+str(len(schedids(etccron)))+' schedules, the table has '+str(len(oldsched))+'; not confirmed by a second read ('+('failed' if not ok2 else str(len(schedids(again))))+'), the old table stays')
+    return
+   log('Snapperiod read on '+str(leaderip)+' confirmed: '+str(len(schedids(etccron)))+' schedules, the table had '+str(len(oldsched))+' (deleted ones go)')
  crons=[x for x in crons.split('\n') if 'nowhost' not in x and len(x) > 5 ]
  cronstr=''
  for x in crons:
   cronstr+=x+'\n'
+ if not ctr:
+  etccron=get(leaderip,'Snapperiod',period)
  nlines=0
  for x in etccron:
   try:
