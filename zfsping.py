@@ -296,10 +296,36 @@ def lazylooper():
         x = x + 1
         if x == len(loopers):
          x = 0
+def isip(x):
+    p = str(x).split('.')
+    return len(p) == 4 and all(o.isdigit() for o in p)
+
+def reannounce():
+    # QSD5.354 (QC 638): the leader's heartbeat can declare a RUNNING member lost after a short network blip (hostlost deletes
+    # ready/<member>), and nothing re-added the key while the member kept running: every reader of ready/<self> then got '_1'
+    # (myhostip/etcdip '_1', NFS never started). A live member puts itself back the way docker_setup does (ready key + the ready
+    # Add sync), only while the leader answers and still lists it in ActivePartners (its own address, written at setup; a host
+    # removal deletes it), and not while it is evacuated/reset (configured/<host> reset, rebootme/<host> set).
+    myip = str(get(leaderip, 'ActivePartners/'+myhost)[0])
+    if not isip(myip):
+        return '_1'
+    if str(get(leaderip, 'configured/'+myhost)[0]) == 'reset' or str(get(leaderip, 'rebootme/'+myhost)[0]) not in ('_1', '-1', ''):
+        return '_1'
+    put(leaderip, 'ready/'+myhost, myip)
+    put(leaderip, 'sync/ready/Add_'+myhost+'_'+myip+'/request', 'ready_'+str(int(stamp()*1000000000)))
+    try:
+        with open('/root/readyreannounce', 'a') as f:
+            f.write(str(int(stamp()))+' ready/'+myhost+' was missing on the leader '+str(leaderip)+': re-added '+myip+'\n')
+    except Exception:
+        pass
+    return myip
+
 def zfspinginit():
     global etcdip, leader, leaderip, myhost, myhostip
     myhostip = get(leaderip, 'ready/'+myhost)[0]
     leader = get(leaderip, 'leader')[0]
+    if not isip(myhostip) and isip(leaderip) and str(leader) not in ('_1', '-1', '') and myhost != leader:
+        myhostip = reannounce()
     #leaderinfo = checkleader('leader','--prefix').stdout.decode('utf-8').split('\n')
     #leader = leaderinfo[0].split('/')[1]
     #leaderip = leaderinfo[1]

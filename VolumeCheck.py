@@ -449,7 +449,16 @@ if __name__=='__main__':
   leaderip = sys.argv[1]
   myhost = sys.argv[2]
   leader=get(leaderip, 'leader')[0]
-  myhostip=get(leaderip,'ready/'+myhost)[0] 
+  myhostip=get(leaderip,'ready/'+myhost)[0]
+  # QSD5.354 (QC 638): ready/<self> missing on the leader (heartbeat dropped a running member) gave myhostip = etcdip = '_1' and
+  # nfsnew.py exited before it started the NFS container. Use the node's own address from ActivePartners (written at setup);
+  # without an address or a leader answer, skip this round (the looper runs again in 10 s) instead of working with '_1'.
+  isip = lambda x: len(str(x).split('.')) == 4 and all(o.isdigit() for o in str(x).split('.'))
+  if not isip(myhostip):
+   myhostip = get(leaderip, 'ActivePartners/'+myhost)[0]
+  if myhost != leader and (not isip(myhostip) or str(leader) in ('_1', '-1', '')):
+   print('VolumeCheck: no own address or leader from', leaderip, '(', leader, myhostip, '): round skipped')
+   sys.exit(0)
   if myhost == leader:
    etcdip = leaderip
   else:
