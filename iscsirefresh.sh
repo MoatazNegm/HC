@@ -22,7 +22,9 @@ for host in "${nodes[@]}" ; do
  # QSD5.294: match the portal AND the node's current IQN. A stale session of the
  # same portal with an old IQN (node re-created with the same IP) used to make
  # the host look connected, so the new target was never logged in.
- hostiqn=`timeout 30 /sbin/iscsiadm -m discovery --portal ${host}:3266 --type sendtargets 2>/dev/null | grep $host | awk '{print $2}' | head -1`
+ # QSD5.314: nonpersistent = only ask the target, do not rewrite the node records every 5 s (a power cut
+ # during that rewrite left a zero-byte record and the login below failed with "No records found").
+ hostiqn=`timeout 30 /sbin/iscsiadm -m discovery --portal ${host}:3266 --type sendtargets -o nonpersistent 2>/dev/null | grep $host | awk '{print $2}' | head -1`
  if [ -z "$hostiqn" ]; then
   # discovery gave nothing: fall back to the old portal-only decision
   echo "$sessions" | grep -q "${host}:3266" && continue
@@ -39,5 +41,11 @@ for host in "${nodes[@]}" ; do
   echo stale session $old on ${host}:3266, logging out
   /sbin/iscsiadm -m node --targetname $old --portal ${host}:3266 -u
  done
- [ -n "$hostiqn" ] && /sbin/iscsiadm -m node --targetname $hostiqn --portal ${host}:3266 -l
+ if [ -n "$hostiqn" ]; then
+  # QSD5.314: drop an empty (zero-byte) record of this portal left by a power cut, then store the record once
+  find /var/lib/iscsi/nodes -path "*/${host},3266,*" -type f -size 0 -print -delete 2>/dev/null
+  find /var/lib/iscsi/nodes -mindepth 2 -maxdepth 2 -type d -name "${host},3266,*" -empty -print -delete 2>/dev/null
+  timeout 30 /sbin/iscsiadm -m discovery --portal ${host}:3266 --type sendtargets >/dev/null 2>&1
+  /sbin/iscsiadm -m node --targetname $hostiqn --portal ${host}:3266 -l
+ fi
 done

@@ -55,6 +55,48 @@ def nodeevent(code, severity, *params):
  except Exception as e:
   print('node event', code, params, e)
 
+# QSD5.337 (test 646 QX-047 step 3): a peer is declared lost only after HOLDOFF seconds of failed checks in a row (it took ~3-4 s:
+# the leader's bond0 re-activations of one NFS address change, ~6 s, made the follower take over while the leader kept running,
+# both nodes leader and the pool imported on both). For the leader its own node address (ready/<leader>) is checked as well as
+# the cluster address: a leader that answers on its node address is not lost. failsince: peer (or '__localetcd__') -> first
+# failure of the current run of failures.
+HOLDOFF = 7   # test 680: rounds on a dead peer take ~2.5 s now: lost on the ~4th failed round (~7.5 s), still more than the ~6 s bond blip of test 646
+failsince = dict()
+# test 683: an nmap started at boot (bond0 still coming up) hung in poll() for over an hour; check_output had no timeout,
+# so the heartbeat loop never ran a round and the follower never took over when the leader stopped.  Every nmap/ping
+# call has a timeout now (check_output kills the child when it expires).
+NMAPSECS = 10
+
+def reachable(ip):
+ # nmap on the etcd port (host discovery as root) and, if that does not say up, one ping
+ if not ip:
+  return False
+ try:
+  res = subprocess.check_output(['nmap','--max-rtt-timeout','500ms','-n','-p','2379',ip],stderr=subprocess.STDOUT,timeout=15).decode('utf-8')
+  if 'Host is up' in res or 'open' in res:
+   return True
+ except Exception:
+  pass
+ try:
+  subprocess.check_output(['ping','-c','1','-w','1',ip],stderr=subprocess.STDOUT,timeout=5)
+  return True
+ except Exception:
+  return False
+
+def heldoff(key, failed, what):
+ # True while a run of failures of <key> is shorter than HOLDOFF (the caller does not act yet); an ok check ends the run
+ if not failed:
+  failsince.pop(key, None)
+  return False
+ first = failsince.setdefault(key, stamp())
+ if stamp() - first < HOLDOFF:
+  print(what, 'failing for', int(stamp() - first), 's, lost only after', HOLDOFF, 's')
+  return True
+ failsince.pop(key, None)
+ with open('/root/heartproblem','a') as f:
+  f.write(chr(10)+what+' failed for '+str(int(stamp() - first))+' s in a row'+chr(10))
+ return False
+
 def leadernextlead(knowns):
  # LEADER ONLY.  The leader names the next leader: a node that has just become ready, or -- when the
  # current one is not a ready node any more (lost, evacuated, this node itself after a take over, None) --
@@ -131,7 +173,7 @@ def hostlost(host, hostip):
                             result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPTIMEOUT).decode('utf-8')
                         except Exception:
                             result=''
-                        if ('Host is up' or 'open' ) in result:
+                        if 'Host is up' in result or 'open' in result:
                             result = (host,'ok')
                         else:
                             result = (host,'lost')
@@ -155,6 +197,19 @@ def hostlost(host, hostip):
                 dels(etcd, 'vol',host)
                 dels(etcd, 'sync/hostdown',host)
 
+
+def hostfound(host, hostip):
+                """Recovery path: a peer that was previously hostlost() is reachable again.
+                Re-publish the four membership keys that hostlost() deletes, and trigger
+                the peer's own republish path so its disk/pool records come back too."""
+                global etcd, leader ,leaderip, myhost, myhostip
+                with open('/root/heartproblem','a') as f:
+                        f.write('recovery:\n'+host+' '+hostip+'\n')
+                put(etcd, 'ready/'+host, hostip)
+                put(etcd, 'known/'+host, hostip)
+                put(etcd, 'running/'+host, hostip)
+                put(etcd, 'host/'+host, hostip)
+                # no /pace/hostfound.sh exists (never did): the returning node's own docker_setup.sh republishes its ready/ key and syncs it
 def heartbeat(*args):
     global etcd, leader ,leaderip, myhost, myhostip
     # start-up reads: a hung docker exec raises TimeoutExpired, heartbeat.py exits and heartbeatlooper.sh starts it again
@@ -188,10 +243,29 @@ def heartbeat(*args):
             print('only one host is running..,,will do nothing')
             continue
         knownsn = len(knowns)
+        if heldoff('__localetcd__', tries < 10, 'ready keys from the local etcd '+str(etcd)):
+           continue
         if tries < 10: 
            hostlost(leader, leaderip)
         elif myhost == leader:
            leadernextlead(knowns)
+
+        # Recovery: ActivePartners that are NOT in knowns were hostlost'd earlier.
+        # Nmap them and re-publish membership keys if they're reachable again.
+        try:
+            partners = get(etcd, 'ActivePartners', '--prefix')
+            known_hosts = set(known[0].split('/')[1] for known in knowns)
+            for partner in partners:
+                phost = partner[0].split('/')[1]
+                pip = partner[1]
+                if phost == myhost or phost in known_hosts:
+                    continue
+                cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+pip
+                res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPSECS).decode('utf-8')
+                if 'Host is up' in res or 'open' in res:
+                    hostfound(phost, pip)
+        except Exception:
+            pass
         for known in knowns:
             host = known[0].split('/')[1]
             if host == myhost:
@@ -205,13 +279,13 @@ def heartbeat(*args):
             tries = 0
             while tries < 2:
                 tries +=1
+                res = ''
                 try:
-                    cmdline=NMAP+port+' '+hostip
-                    res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPTIMEOUT).decode('utf-8')
-                except Exception:
-                    # failed or timed out nmap (the child is killed): no answer, go to the ping check below
-                    res=''
-                if ('Host is up' or 'open' ) in res:
+                    cmdline='nmap --max-rtt-timeout 500ms --host-timeout 1500ms -n -p '+port+' '+hostip   # test 680: a dead peer answers nothing; nmap's own waits made a round ~5 s
+                    res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPSECS).decode('utf-8')
+                except:
+                    result=(host,'doubt')
+                if 'Host is up' in res or 'open' in res:
                     result = (host,'ok')
                 else:
                     result = (host,'doubt')
@@ -221,9 +295,13 @@ def heartbeat(*args):
                     print(cmdline)
                     try:
                         subprocess.check_output(cmdline.split(),timeout=5)
-                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    except Exception:
                         result=(host,'lost')
                 if 'ok' in str(result):
+                    break
+                # test 680: no port and no ping answer: this round is over (the second try and its 1 s sleep made a round on a
+                # dead peer ~5 s; HOLDOFF counts from the first failed round, so detection took ~15 s)
+                if 'lost' in str(result):
                     break
                 sleep(1)
             print(result)
@@ -231,6 +309,13 @@ def heartbeat(*args):
                 # nmap gave no answer but ping did (in the last try): the host is alive, do not declare it lost
                 # (a local nmap problem must never start a take over of a live leader); it is checked again next loop
                 print('nmap doubt but ping answers', host, hostip)
+                heldoff(host, False, 'host '+host+' '+hostip)   # alive: ends a run of failures (merge M+A)
+                continue
+            if 'ok' not in str(result) and host == leader and str(known[1]) not in ('', leaderip):
+                if reachable(str(known[1])):
+                    print('leader',host,'does not answer on',leaderip,'but on its node address',known[1],': not lost')
+                    result = (host,'ok on node address')
+            if heldoff(host, 'ok' not in str(result), 'host '+host+' '+hostip):
                 continue
             if 'ok' not in str(result):
                 with open('/root/heartproblem','a') as f:

@@ -20,7 +20,16 @@ nochap=0
 case "$chapuser" in ''|NoCHAP|nochap|-) nochap=1 ;; esac
 [ "$chapuser" = 'MoatazNegm' ] && [ "$chappas" = 'MezoAdmin' ] && nochap=1
 if [ $nochap -eq 0 ]; then
- chappas=`/TopStor/secretmask.py phrasedec chap "$chappas"`
+ # merge M+A: M's API stores 'enc~...' (secretmask.py); A's fapi sends 'chapenc_...' (decthis.sh, '/' sent as '@@sep'),
+ # 'clearchap' = remove the CHAP
+ case "$chappas" in
+  clearchap) chappas=''; nochap=1 ;;
+  chapenc_*)
+   enc=`echo "$chappas" | sed 's/^chapenc_//; s/@@sep/\//g'`
+   chappas=`/TopStor/decthis.sh "$chapuser" "$enc" 2>/dev/null | sed -n 's/^_result\(.*\)_result$/\1/p'`
+   ;;
+  *) chappas=`/TopStor/secretmask.py phrasedec chap "$chappas"` ;;
+ esac
  [ -n "$chappas" ] || nochap=1
 fi
 lunid=`echo $@ | awk '{print $8}'`
@@ -30,8 +39,6 @@ is_container 2>/dev/null && /pace/czvoldev.sh
 disk=`ls -l /dev/zvol/${pool}/$vol | awk -F'/' '{print $NF}'`
 echo disk $disk
 #chapuser='iqn.1991-05.com.microsoft:desktop-jckvhk3'
-#chapuser='MoatazNegm'
-#chappass='MezoPass1234'
 myhost=`hostname -s`;
 change=0
 #declare -a iscsitargets=(`cat /pacedata/iscsitargets | awk '{print $2}' `;
@@ -45,8 +52,11 @@ targetcli ls iscsi/ | grep ".$ipdom:data" &>/dev/null
 if [ $? -ne 0 ]; then
  targetcli iscsi/ create iqn.2016-03.com.${ipdom}:data &>/dev/null
 fi
-pdisk=`targetcli ls backstores/block`
-echo $pdisk | grep $disk 
+pdisk=`targetcli ls backstores/block 1 | awk '{print $2}'`
+# a zvol exported as a cluster disk (<disk>-<host>, made by an older disk exporter) holds the zvol: remove it
+echo "$pdisk" | grep -qx "${disk}-${myhost}" && targetcli backstores/block delete ${disk}-${myhost}
+# the exact backstore name: 'grep $disk' also matched zd1 in zd16-... or zd0 in zd0-<host> and the volume got no LUN
+echo "$pdisk" | grep -qx "$diskids"
 if [ $? -ne 0 ];
 then 
  targetcli backstores/block create $diskids /dev/$disk
@@ -58,18 +68,28 @@ tpg='tpg1'
 #targetcli iscsi/iqn${iqn} create $portalport  
 targetcli iscsi/iqn${iqn} set global auto_add_mapped_luns=false
 targetcli iscsi/iqn.2016-03.com.$ipdom:data/${tpg}/portals delete 0.0.0.0 3260
-targetcli iscsi/iqn${iqn}/${tpg}/luns/ create /backstores/block/$diskids  
+# QSD5.340 (test 650): one TPG LUN per backstore. It was created again on every call (one call per initiator, and again by
+# VolumeChangeISCSI), so the volume could appear twice on the target under another LUN number.
+targetcli ls iscsi/iqn${iqn}/${tpg}/luns 1 2>/dev/null | grep -qF "[block/$diskids "
+[ $? -ne 0 ] && targetcli iscsi/iqn${iqn}/${tpg}/luns/ create /backstores/block/$diskids
+# no initiator (This_lun_is_not_mapped from the UI, or empty): the LUN is on the target, no node ACL is made for it
+echo "$target" | grep -Eiq '^(iqn|eui|naa)\.'
+if [ $? -eq 0 ];
+then
 targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
 echo targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
 cluns=`targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls`
 echo $cluns | grep $diskids 
 if [ $? -ne 0 ];
 then
- # the number of LUNs already mapped for this initiator (the old 'echo $cluns | wc -l' always counted one line = 1)
- nextlun=`targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls | grep -c mapped_lun`
+ # the lowest mapped_lun number not used yet by this initiator (a count gave a used number once a lower one was deleted)
+ used=`echo "$cluns" | grep -o 'mapped_lun[0-9]*' | sed 's/mapped_lun//'`
+ nextlun=0
+ while echo "$used" | grep -qx $nextlun; do nextlun=$((nextlun+1)); done
  echo targetcli iscsi/iqn${iqn}/${tpg}/acls/$target = $nextlun
  targetcli iscsi/iqn${iqn}/${tpg}/acls/$target create mapped_lun=$nextlun tpg_lun_or_backstore=/backstores/block/$diskids write_protect=0
  echo targetcli iscsi/iqn${iqn}/${tpg}/acls/$target create mapped_lun=$nextlun tpg_lun_or_backstore=/backstores/block/$diskids write_protect=0
+fi
 fi
 targetcli iscsi/iqn${iqn}/${tpg} set attribute demo_mode_write_protect=0 
 targetcli iscsi/iqn${iqn}/${tpg} set attribute cache_dynamic_acls=1
@@ -82,13 +102,21 @@ targetcli iscsi/iqn${iqn}/${tpg} set attribute generate_node_acls=0
 # ("'NULL' is not a permitted value") and writes 'NULL' to configfs itself for an empty value.  One field per call and
 # the empty field last on the line: the configshell parser takes the next word as the value ('userid= password='
 # sets userid to the text 'password=').
+# merge M+A (QSD5.341, A): the secret is written with the shell's printf into configfs when the ACL is there, so it is on
+# no command line (not in ~/.targetcli/log.txt, ps or a trace); targetcli is used only when configfs has no such ACL.
 chapclear() {
  targetcli "$1" set auth password= >/dev/null 2>&1
  targetcli "$1" set auth userid= >/dev/null 2>&1
 }
 chapclear iscsi/iqn${iqn}/${tpg}   # the old hard-coded tpg pair
 if [ $nochap -eq 0 ]; then
- targetcli iscsi/iqn${iqn}/${tpg}/acls/$target set auth userid=$chapuser password=$chappas >/dev/null
+ aclauth=/sys/kernel/config/target/iscsi/iqn${iqn}/tpgt_1/acls/`echo $target | tr 'A-Z' 'a-z'`/auth
+ if [ -d $aclauth ]; then
+  printf '%s' "$chapuser" > $aclauth/userid
+  printf '%s' "$chappas" > $aclauth/password
+ else
+  targetcli iscsi/iqn${iqn}/${tpg}/acls/$target set auth userid=$chapuser password=$chappas >/dev/null
+ fi
  targetcli iscsi/iqn${iqn}/${tpg} set attribute authentication=1
  echo chap on for $target
 else

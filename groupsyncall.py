@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import subprocess,sys
+import subprocess,sys,re
 from etcdgetpy import etcdget as get
 from etcdgetnoportpy import etcdget as getnoport
 from etcdput import etcdput as put
@@ -29,6 +29,9 @@ def thread_add(user,syncip,pullsync='pullavail'):
   return
  username=user[0].replace('usersigroup/','')
  if 'Everyone' == username:
+  # Everyone is made on every node by its setup and never changed by a sync, but its row (all users) is copied: a follower
+  # without it read _1 and wrote _1/<user>/_1 when it added a user to it (test 620)
+  everyonecopy(user,syncip)
   return
  groupusers=user[1].split('/')[2]
  if groupusers=='no':
@@ -52,6 +55,16 @@ def groupnames(entries):
   if isinstance(entry, (list, tuple)) and len(entry) > 1 and str(entry[0]).startswith('usersigroup/'):
    names.add(str(entry[0]).split('/',1)[1])
  return names
+
+def everyonecopy(row,syncip):
+ # the leader's usersigroup/Everyone row, exactly, into this node's etcd (only a real value: never _1 or a garbled one);
+ # only on a follower of this cluster (a replication receiver keeps its own Everyone)
+ global leader, myhost
+ try:
+  if myhost not in leader and row[0] == 'usersigroup/Everyone' and re.match(r'[0-9]+:[0-9]+:[^/]*/[^/]*/[^/]*/', str(row[1])) and str(row[1]) != str(get(syncip,'usersigroup/Everyone')[0]):
+   put(syncip, row[0], row[1])
+ except Exception as e:
+  print('everyonecopy', e)
 
 #def thread_del(*user):
 def thread_del(username,pullsync='pullavail'):
@@ -147,8 +160,25 @@ def onegroupsync(oper,usertosync,tosync='pullavail'):
         print('group add skipped, group not on the leader any more:', usertosync)
         return
     thread_add(('usersigroup/'+usertosync, value),syncip)
+    # and the Everyone row of the leader (a garbled local copy is repaired with the next group sync)
+    try:
+     everyone=[]
+     if 'pullsync' not in tosync and myhost not in leader:
+        everyone=get(leaderip, 'usersigroup/Everyone', '--prefix')
+     for row in [ g for g in everyone if isinstance(g,(tuple,list)) and g[0] == 'usersigroup/Everyone' ]:
+        everyonecopy(row,syncip)
+    except Exception as e:
+     print('onegroupsync: no Everyone row of the leader', e)
  else:
     user = usertosync
+    # the groups of the leader NOW (allusers of the last full sync may still hold the deleted group)
+    try:
+     if 'pullsync' in tosync:
+        allusers=getnoport(leaderip,pport,'usersigroup','--prefix')
+     else:
+        allusers=get(leaderip,'usersigroup','--prefix')
+    except Exception as e:
+     print('onegroupsync: cannot read the groups of the leader', e)
     thread_del(user,tosync)
     
  

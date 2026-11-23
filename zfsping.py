@@ -52,7 +52,7 @@ def heartbeatpls():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in heartbeat:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
  
 
@@ -68,7 +68,7 @@ def iscsiwatchdogproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in iscsiwatchdogproc:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
 def croncallproc():
  global leaderip, croncallrun, leader, myhost, myhostip
@@ -92,7 +92,7 @@ def putzpoolproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in putzpool:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
 
 def addactiveproc():
@@ -103,7 +103,7 @@ def addactiveproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in addactive:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
 
 def selectimportproc():
@@ -120,7 +120,7 @@ def selectimportproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in selectimport:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
  importrun = 0 
    
@@ -144,7 +144,7 @@ def zpooltoimportproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in zpooltoimport:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
  poolrun = 0
  
@@ -168,7 +168,7 @@ def volumecheckproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in volumecheckproc:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
  volrun = 0
 def refreshall():
@@ -209,7 +209,7 @@ def selectspareproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in selectspare:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   selectsparerun = 0 
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
  selectsparerun = 0 
@@ -222,7 +222,7 @@ def syncrequestproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in syncrequest:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
 
 def remknownproc():
@@ -233,7 +233,7 @@ def remknownproc():
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in remknown:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
 
 #def addknownproc():
@@ -245,18 +245,27 @@ def remknownproc():
 #  print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
 #  print(' in addknown:',e)
 #  with open('/root/pingerr','a') as f:
-#   f.write(e)
+#   f.write(str(e)+'\n')
 #  print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
 
 def activeusersproc():
- global leader, myhost
+ # QSD5.344 (test 658 QX-059 step 3): the clients of this node's volumes -> etcd connections/<myhost> (volumes/connections).
+ # The loopers run every few seconds in a pool process (no shared globals): /root/activeusers.stamp keeps it to ~30 s.
+ global leaderip, myhost
  try:
-  activeusers(leader, myhost)
+  try:
+   if stamp() - os.path.getmtime('/root/activeusers.stamp') < 25:
+    return
+  except OSError:
+   pass
+  with open('/root/activeusers.stamp','w') as f:
+   f.write(str(int(stamp()))+'\n')
+  activeusers(leaderip, myhost)
  except Exception as e:
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
   print(' in activeusers:',e)
   with open('/root/pingerr','a') as f:
-   f.write(e)
+   f.write(str(e)+'\n')
   print('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
 
 def spaceopti():
@@ -267,7 +276,7 @@ def spaceopti():
 
 #loopers = [ addknownproc, remknownproc, activeusersproc, iscsiwatchdogproc, putzpoolproc, addactiveproc, selectimportproc, zpooltoimportproc , volumecheckproc, selectspareproc , syncrequestproc ]
 loopers = [ zpooltoimportproc, selectspareproc , putzpoolproc, spaceopti, croncallproc ]
-loopers = [  putzpoolproc, spaceopti ]
+loopers = [  putzpoolproc, spaceopti, activeusersproc ]
 #loopers = [ zpooltoimportproc, volumecheckproc, selectspareproc , putzpoolproc]
 
 def CommonTask(task):

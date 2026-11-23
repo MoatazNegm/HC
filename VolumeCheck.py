@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import subprocess,sys, os
+import subprocess,sys, os, fcntl
 from etcdgetpy import etcdget as get
 from etcdput import etcdput as put 
 from etcddel import etcddel as dels 
@@ -185,20 +185,99 @@ def nfsnew( etcds, replis, dockers):
  print('cccccccccccccccccccccccccccccc')
  print('dirty',dirtyset)
  print('cccccccccccccccccccccccccccccc')
+ # QSD5.337 (test 646 QX-047 step 3): VolumeChangeNFS rebuilds the container of a changed address itself and holds the address
+ # lock (/tmp/shareaddr.<ip>.lock) meanwhile; this pass rebuilt the same container in parallel. A locked address is skipped
+ # (the next pass looks again); the lock is held here while the container is rebuilt (nfsnew.sh does not lock again,
+ # SHAREADDR_LOCK); a container that is running with the volume once the lock is ours (rebuilt by the holder) is left alone.
+ # merge M+A: one worker per address in parallel (runbygroup, M), the address lock and the
+ # already-running check per share (A)
  def one(res):
    reslist=res.split('/')
+   ipaddr = reslist[getippos('nfs')]
    print('update',reslist[1])
-   cmdline = '/TopStor/undockerthis.sh '+reslist[getippos('nfs')]
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   left='volumes/NFS/'+myhost+'/'+'/'.join(reslist[0:2])
-   put(leaderip, left,res)
-   dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
-   cmdline='/TopStor/nfsnew.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[9]+' '+reslist[10]+' NFS'
-   print('aloooooooooooooooooooooo')
-   print(cmdline)
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   put(etcdip,'dirty/volume','0')
+   lockf = addrlock(ipaddr)
+   if lockf is None:
+     print('address',ipaddr,'is being changed by another job, skipped')
+     return
+   try:
+     left='volumes/NFS/'+myhost+'/'+'/'.join(reslist[0:2])
+     if reslist[-1] == 'active' and inrunning('NFS-'+ipaddr, '"/'+reslist[0]+'/'+reslist[1]+'"'):
+       put(leaderip, left,res)
+       dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
+       print('container NFS-'+ipaddr+' already runs with',reslist[1])
+       return
+     cmdline = '/TopStor/undockerthis.sh '+ipaddr
+     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+     put(leaderip, left,res)
+     dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
+     cmdline='/TopStor/nfsnew.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[9]+' '+reslist[10]+' NFS'
+     print('aloooooooooooooooooooooo')
+     print(cmdline)
+     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE, env=dict(os.environ, SHAREADDR_LOCK=ipaddr)).stdout.decode('utf-8')
+     put(etcdip,'dirty/volume','0')
+   finally:
+     lockf.close()
  runbygroup(sorted(dirtyset), lambda r: r.split('/')[getippos('nfs')], one)
+
+def addrlock(ipaddr):
+ # the per-address lock of shareaddr changes (VolumeChangeNFS, nfsnew.sh); None when another job holds it
+ try:
+   lockf = open('/tmp/shareaddr.'+ipaddr+'.lock', 'w')
+ except OSError:
+   return open(os.devnull, 'w')   # no lock file possible: work as before, without the lock
+ try:
+   fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+ except OSError:
+   lockf.close()
+   return None
+ return lockf
+
+def inrunning(dckrname, mountsrc):
+ cmdline = 'docker ps --format {{.Names}}'
+ names = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()
+ if dckrname not in names:
+   return False
+ cmdline = 'docker inspect '+dckrname
+ return mountsrc in subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+
+def repairbyaddress(dirtyset, leftof, cmdof):
+ # test 643 step 3: every share of an address runs in one container. A missing container made all its shares dirty and
+ # each one removed and re-created that same container (N shares, N restarts ~14 s apart). The shares are repaired per
+ # address: the container is removed and started once (cifs.py starts it with every share of the address).
+ global leader, leaderip, myhost, myhostip, etcdip
+ byaddress = dict()
+ for res in sorted(dirtyset):
+   byaddress.setdefault(res.split('/')[7], []).append(res)
+ def oneaddr(ipaddr):
+   # merge M+A: only shares whose file still says what this pass read (M, current()), addresses in parallel (M)
+   ress = [ r for r in byaddress[ipaddr] if current(r) ]
+   if not ress:
+     print('share files of',ipaddr,'changed since this pass read them, left to the next pass')
+     return
+   print('update',ipaddr,[ x.split('/')[1] for x in ress ])
+   # test 16 step 9: the create (VolumeActivateCIFSdom -> cifs.py) may be building this address right now; a second build in
+   # parallel lost the share config. A locked address is skipped (the next pass looks again), as nfsnew does.
+   lockf = addrlock(ipaddr)
+   if lockf is None:
+     print('address',ipaddr,'is being built by another job, skipped')
+     return
+   try:
+     cmdline = '/TopStor/undockerthis.sh '+ipaddr
+     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+     for res in ress:
+       left = leftof(res.split('/'))
+       put(leaderip, left,res)
+       print('tosync this',leaderip, left,res)
+     dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
+     cmdline = cmdof(ress[0].split('/'))
+     print('cifs.py: '+cmdline)
+     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE, env=dict(os.environ, SHAREADDR_LOCK=ipaddr)).stdout.decode('utf-8')
+     print('cifs result',result)
+     put(etcdip,'dirty/volume','0')
+   finally:
+     lockf.close()
+ runbygroup(list(byaddress), lambda a: a, oneaddr)   # one thread per address (M)
+ return len(byaddress) > 0
 
 def cifs( etcds, replis, dockers):
  global leader, leaderip, myhost, myhostip, etcdip
@@ -206,31 +285,16 @@ def cifs( etcds, replis, dockers):
  print('cccccccccccccccccccccccccccccc')
  print('dirty',dirtyset)
  print('cccccccccccccccccccccccccccccc')
- def one(res):
-   reslist=res.split('/')
-   if not current(res):
-     print('share file changed since this pass read it, left to the next pass', res)
-     return
-   print('update',reslist[1])
-   cmdline = '/TopStor/undockerthis.sh '+reslist[7]
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   if 'DOMAIN' in str(res):
-    left='volumes/CIFS_'+reslist[9]+'/'+myhost+'/'+'/'.join(reslist[0:2])
-   else:
-    left='volumes/CIFS/'+myhost+'/'+'/'.join(reslist[0:2])
-   put(leaderip, left,res)
-   print('tosync this',leaderip, left,res)
-   dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
-   if 'DOMAIN' in str(res):
-     cmdline='/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+leaderip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' CIFS_'+reslist[9]+' '+' '.join(reslist[9:])
-
-   else:
-    cmdline='/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+leaderip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' CIFS '+' '.join(reslist[9:])
-    print('cif cifs: '+cmdline)
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   print('cifs result',result)
-   put(etcdip,'dirty/volume','0')
- runbygroup(sorted(dirtyset), lambda r: r.split('/')[7], one)
+ def leftof(reslist):
+   if 'DOMAIN' in str(reslist):
+    return 'volumes/CIFS_'+reslist[9]+'/'+myhost+'/'+'/'.join(reslist[0:2])
+   return 'volumes/CIFS/'+myhost+'/'+'/'.join(reslist[0:2])
+ def cmdof(reslist):
+   # r9 (validator r8 R3, M): cifs.py reads the homes/shares of the address from the LEADER
+   if 'DOMAIN' in str(reslist):
+     return '/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+leaderip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' CIFS_'+reslist[9]+' '+' '.join(reslist[9:])
+   return '/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+leaderip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' CIFS '+' '.join(reslist[9:])
+ return repairbyaddress(dirtyset, leftof, cmdof)
 
 def homes(etcds, replis, dockers):
  global leader, leaderip, myhost, myhostip, etcdip
@@ -239,25 +303,12 @@ def homes(etcds, replis, dockers):
  print('hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh')
  print('dirty',dirtyset)
  print('hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh')
- def one(res):
-   reslist=res.split('/')
-   if not current(res):
-     print('share file changed since this pass read it, left to the next pass', res)
-     return
-   print('update',reslist[1])
-   cmdline = '/TopStor/undockerthis.sh '+reslist[7]
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   left='volumes/HOMEE/'+myhost+'/'+'/'.join(reslist[0:2])
-   put(leaderip, left,res)
-   dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
-   # r9 (validator r8 R3): cifs.py reads the homes of the address and the user hashes from the LEADER (as VolumeChangeHOME
-   # since r8); a follower's own copy lags the sync loop and served a disabled or moved home again
-   cmdline='/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+leaderip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' HOMEE '+' '.join(reslist[9:])
-   print('home cifs: '+cmdline)
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   print('result',result)
-   put(etcdip,'dirty/volume','0')
- runbygroup(sorted(dirtyset), lambda r: r.split('/')[7], one)
+ def leftof(reslist):
+   return 'volumes/HOMEE/'+myhost+'/'+'/'.join(reslist[0:2])
+ def cmdof(reslist):
+   # r9 (validator r8 R3, M): cifs.py reads the homes/shares of the address from the LEADER
+   return '/TopStor/cifs.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+leaderip+' '+reslist[0]+' '+reslist[1]+' '+reslist[7]+' '+reslist[8]+' HOMEE '+' '.join(reslist[9:])
+ return repairbyaddress(dirtyset, leftof, cmdof)
 
 
 def iscsi(etcds, replis):

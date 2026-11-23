@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import sys
 from etcdgetpy import etcdget as get
+from poolguard import deletingpools
 from logqueue import queuethis
 from etcdput import etcdput as put 
 from etcddel import etcddel as dels 
@@ -56,6 +57,9 @@ def selectimport(*args):
         if myhost not in poolpair[1]:
             continue
         pool=poolpair[0].split('/')[1]
+        # test 678: this list is the local etcd's (it can still name a pool deleted minutes ago): no standby for a deleted pool
+        if pool in deletingpools(leaderip):
+            continue
         chost=poolpair[1]
         nhost=str(get(etcdip, 'poolnxt/'+pool)[0])
         if nhost in knowns and chost not in nhost:

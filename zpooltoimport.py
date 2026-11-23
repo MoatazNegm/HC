@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 import subprocess, sys
-import os
+import os, json
 from logqueue import queuethis, initqueue
 from etcdput import etcdput as put
 from etcdgetpy import etcdget as get 
+from poolguard import deletingpools
 from etcddel import etcddel as dels
 from poolstoimport import getpoolstoimport, initgetpoolstoimport
 from allphysicalinfo import getall 
@@ -120,6 +121,106 @@ def poolishere(pool):
  return os.path.exists('/proc/spl/kstat/zfs/'+pool)
 
 
+def poolnamed(hostcurrent, pool):
+ # True when the hosts/<host>/current listing (json written by putzpool) names <pool> exactly
+ try:
+  return any(isinstance(p, dict) and p.get('name') == pool for p in json.loads(hostcurrent))
+ except Exception:
+  return ('"'+pool+'"') in str(hostcurrent) or ("'"+pool+"'") in str(hostcurrent)
+
+
+def heldelsewhere(pool):
+ # QSD5.327 (test 634 B1): '' when this node may import <pool>, otherwise the reason why not.
+ # poolnxt/<pool> names the standby node of EVERY pool (it is set while the owner is alive, so that a take over finds it), and
+ # the only check before the import was "the pool is not in the hosts/*/current lists".  Right after a pool create the leader's
+ # selectimport.py sets poolnxt/<pool>=<member> as soon as DGsetPool wrote pools/<pool>=<leader>, a few seconds before the
+ # leader's putzpool lists the pool in hosts/<leader>/current: the member imported the leader's pool (one pool ONLINE on two
+ # nodes, then reguid'ed by the member).  A failed etcd read of the hosts list had the same effect.  Now the pool is not
+ # imported while it is being deleted (pooldeleting/<pool>, DGdestroyPool), while its owner key pools/<pool> names another
+ # node that is alive (ready/<host>), or while a live node lists it; when the ready or hosts list cannot be read, nothing is
+ # imported in this round (poolnxt stays, the next round tries again).  A dead owner loses its ready/ key, its pools/ keys and
+ # its hosts/ listing (heartbeat.py hostlost, remknown.py), so a take over still imports the pool.
+ readies = get(leaderip, 'ready', '--prefix')
+ if len(readies) == 0 or '_1' in str(readies) or 'not reachable' in str(readies):
+  return 'ready list not readable'
+ alive = [ str(x[0]).split('/')[1] for x in readies if len(str(x[0]).split('/')) > 1 ]
+ if str(get(leaderip, 'pooldeleting/'+pool)[0]) not in ('_1', ''):
+  return 'the pool is being deleted'
+ owner = str(get(leaderip, 'pools/'+pool)[0])
+ if owner not in ('_1', '', myhost) and owner in alive:
+  return 'owner '+owner+' is alive (pools/'+pool+')'
+ hosts = get(leaderip, 'hosts', '/current')
+ if len(hosts) == 0 or hosts[0] == '_1':
+  return 'hosts list not readable'
+ for hostline in hosts:
+  hostname = str(hostline[0]).split('/')[1] if len(str(hostline[0]).split('/')) > 1 else ''
+  if hostname in ('', myhost) or hostname not in alive:
+   continue
+  if poolnamed(hostline[1], pool):
+   return 'listed by the live node '+hostname
+ return ''
+
+
+def delkey(key):
+ # delete exactly one key on the leader (etcddel's filters match pool names as substrings: pdhcp1 is in pdhcp12)
+ subprocess.run(['etcdctl','--endpoints=http://'+leaderip+':2379','del',key],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+
+
+stalefile = '/root/zpoolstalekeys'
+stalesecs = 300
+
+def cleanstale(notactivepools):
+ # QSD5.327: pools/<name>, poolnxt/<name> and pooldeleting/<name> keys of a pool that no node lists (hosts/*/current), that this
+ # leader cannot import (zpool import) and that is not imported here, for stalesecs seconds in a row (counted on this node's
+ # clock only), are removed.  They were left by deleted pools (pools/pdhcp277363138 long after its delete) and a stale
+ # poolnxt kept the standby trying to import a deleted pool by its name.  The leader sets poolnxt again for every pool it
+ # sees, so a pool that comes back is assigned again.
+ hosts = get(leaderip, 'hosts', '/current')
+ if len(hosts) == 0 or hosts[0] == '_1':
+  return
+ known = set( p['name'] for p in notactivepools )
+ for hostline in hosts:
+  try:
+   for p in json.loads(hostline[1]):
+    known.add(p.get('name'))
+  except Exception:
+   return            # a listing that cannot be read: decide nothing in this round
+ keys = []
+ for prefix in ('pools/', 'poolnxt/', 'pooldeleting/'):
+  got = get(leaderip, prefix, '--prefix')
+  if 'not reachable' in str(got):
+   return
+  keys += [ x for x in got if isinstance(x, tuple) ]
+ try:
+  with open(stalefile) as f:
+   seen = json.load(f)
+ except Exception:
+  seen = {}
+ now = stamp()
+ still = {}
+ for key, value in keys:
+  name = key.split('/', 1)[1]
+  if name in known or 'pree' in name or 'pdhcp' not in name or os.path.exists('/proc/spl/kstat/zfs/'+name):
+   continue
+  first = seen.get(key, now)
+  if now < first:
+   first = now       # the clock went back: count again
+  if now - first < stalesecs:
+   still[key] = first
+   continue
+  print('stale key of a pool no node has, removed:', key, value)
+  delkey(key)
+  if key.startswith('pools/'):
+   dosync('pools_', 'sync/pools/Del_pools_'+name+'/request', 'pools_'+str(stamp()))
+  elif key.startswith('poolnxt/'):
+   dosync('poolnxt_', 'sync/poolnxt/Del_poolnxt_'+name+'/request', 'poolnxt_'+str(stamp()))
+ try:
+  with open(stalefile, 'w') as f:
+   json.dump(still, f)
+ except Exception:
+  pass
+
+
 def memberimportdir(pool, disks):
  # a directory of symlinks to the by-id devices (and their partitions) of the disks etcd lists in <pool>; '' when none is present
  import glob
@@ -192,6 +293,23 @@ def nomemberhere(pool, poolline, owner):
  except OSError:
   pass
 
+def mirroractpool():
+ """test 14 step 13: a follower keeps the leader's ActPool/<pool> keys in its own etcd.  ActPool has no initial sync and a
+ node that was down when a pool was created never got its key (its pending Add request is marked done on the way back);
+ when that node took over, the import was refused ("no ActPool") and the pool's surviving disk looked free.  Only adds or
+ updates keys: a pool the leader no longer lists is removed by the ActPool/pools Del requests, as before."""
+ try:
+  leaderact = get(leaderip, 'ActPool', '--prefix')
+  if not leaderact or '_1' in str(leaderact):
+   return
+  mine = { k: v for k, v in [ x for x in get(etcdip, 'ActPool', '--prefix') if isinstance(x, (tuple, list)) and len(x) > 1 ] }
+  for item in leaderact:
+   if isinstance(item, (tuple, list)) and len(item) > 1 and str(item[0]).startswith('ActPool/') and mine.get(item[0]) != item[1]:
+    print('ActPool mirrored from the leader:', item[0], item[1])
+    put(etcdip, item[0], item[1])
+ except Exception as e:
+  print('mirroractpool failed:', e)
+
 def zpooltoimport(*args):
  global leader, leaderip, myhost, myhostip, etcdip
  if args[0]=='init':
@@ -207,6 +325,8 @@ def zpooltoimport(*args):
  nextpools=get(leaderip, 'poolnxt', '--prefix') 
  if 'not reachable' in str(nextpools):
         return
+ if myhost != leader and etcdip != leaderip:
+    mirroractpool()
  needtoimport=[ x for x in nextpools if myhost in str(x)] 
  pools = [v for k,v in getall(leaderip)['pools'].items()]
  mypools = [v  for v in pools if v['host'] == myhost ]
@@ -225,6 +345,11 @@ def zpooltoimport(*args):
         continue
     if str(get(leaderip,'destroying/'+pool)[0]) != '_1':
         continue                           # QSD5.345: being destroyed: no reguid, no new ActPool/<pool> meanwhile
+    why = heldelsewhere(pool)
+    if why:
+        # QSD5.327: never give a new id to a pool another live node holds (the marker stays, retried later)
+        print('reguid not done here:', pool, why)
+        continue
     if poolonline(pool):
         cmdline = 'zpool reguid '+pool
         result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -249,6 +374,11 @@ def zpooltoimport(*args):
    pool = poolline[0].replace('poolnxt/','')
    if pool in str(pools):
     continue
+   # test 678 step 3: a pool that is being deleted is never imported here (the standby imported its old leg 16 s after the
+   # delete on the owner, and the deleted pool came back with its volumes)
+   if pool in deletingpools(leaderip):
+    print('pool is being deleted, not imported', pool)
+    continue
    if foreignpool(pool):
     print('pool of another cluster, not imported', pool)
     dels(leaderip, 'poolnxt', pool)
@@ -264,6 +394,10 @@ def zpooltoimport(*args):
    if ownedbylivepeer(pool):
     print('pool is imported and owned by a live node, not taken over', pool)
     continue
+   why = heldelsewhere(pool)
+   if why:
+    print('pool not imported here:', pool, why)   # poolnxt stays: it is the standby assignment for a take over
+    continue
    print('pool to be imported now', pool)
    # the assignment may have been withdrawn since the list was read (DGdestroyPool exports the pool for a moment): a pool that
    # is being destroyed must not be taken over here (QSD5.325)
@@ -271,8 +405,11 @@ def zpooltoimport(*args):
     print('assignment of', pool, 'withdrawn, not imported')
     continue
    poolid = get(leaderip,'ActPool/'+pool)[0]
-   if poolid == '_1':
-    poolid = pool
+   if poolid in ('_1', '', -1):
+    # test 680: no ActPool/<pool> = the cluster does not know this pool (deleted, its marker gone after a cold boot, or a
+    # stale leg): it was imported by name and came back with its shares.  Every real pool gets ActPool at creation.
+    print('pool unknown to the cluster (no ActPool), not imported', pool)
+    continue
    # Import only from the disks that are members of this pool (etcd), so a stale leg that kept the pool's name but was
    # detached while its node was away (old guid, free disk now) can never be imported as the pool and then be re-attached over.
    # Never a plain 'zpool import <id>' (it scans every device of the host): with no member disk here there is nothing of this
@@ -373,12 +510,18 @@ def zpooltoimport(*args):
         cpools = cpools + [notpo] 
     #if len(readies) == 1:
     #    dels(leaderip, 'ActPool/'+notpname)
- 
+ try:
+    cleanstale(notactivepools)
+ except Exception as e:
+    print('cleanstale failed:', e)
+
  importedpools = set(str(p.get('name')) for p in pools if isinstance(p, dict))
  for poolinfo in cpools:
     pool = poolinfo['name']
     if 'pree' in pool:
      continue
+    if pool in deletingpools(leaderip):
+        continue           # test 678: a deleted pool gets no standby again
     # QSD5.352 (QC 684): an imported pool is always re-checked; poolnxt naming this leader (written while it was alone)
     # kept the pool in needtoimport and was never moved to the node that came back
     if pool not in str(needtoimport) or (pool in importedpools and len(readies) > 1):

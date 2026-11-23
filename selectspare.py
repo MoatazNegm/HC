@@ -17,6 +17,7 @@ from allphysicalinfo import getall
 from time import sleep
 from sendhost import sendhost
 from time import time as stamp
+from diskguard import foreignpool
 #from syncpools import syncmypools
 os.environ['ETCDCTL_API']= '3'
 newop=[]
@@ -502,7 +503,27 @@ def solvetheasks(needtoreplace):
             put(leaderip, askleft.replace('ask/',''), askright)
    
     return
-  
+
+def adminoffline(allinfo, exception):
+ # the raids (pool, raid) that hold a disk the admin took offline: pools/actionOnDisk action=offline sets
+ # offlinethis/<pool>=<disk> (TopStor/actionOnDisk.py:32) and only a successful online deletes it (actionOnDisk.py:43);
+ # zfs shows such a disk OFFLINE. The spare logic must neither replace that disk nor re-optimise its raid (it did, within
+ # one cycle: test 634 step 1). A dm- stub that solvedegradedraid offlines itself is not an admin offline;
+ # FAULTED/UNAVAIL/REMOVED disks are not OFFLINE and keep their auto-replace.
+ offdisks = dict()
+ for x in exception:
+  if type(x) is tuple and x[0].startswith('offlinethis/'):
+   offdisks[x[0].split('/',1)[1]] = x[1].split('/')[-1]
+ held = set()
+ for raidname in allinfo['raids']:
+  raid = allinfo['raids'][raidname]
+  for disk in raid['disklist']:
+   if 'dm-' in disk['name']:
+    continue
+   if 'OFF' in disk.get('status','') or offdisks.get(raid.get('pool',''),'_1') in [disk['name'], disk.get('actualdisk','')]:
+    held.add((raid['pool'], raid['name']))
+ return held, offdisks
+
 def spare2(*args):
  global newop
  global usedfree 
@@ -535,9 +556,12 @@ def spare2(*args):
       print('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
       print('need to replace',raidinfo)
       poolname = raidinfo[0].split('/')[2]
-      #if poolname in str(exception):
-      # print('this pool should not be automatically healed ')
-      # continue
+      held, offdisks = adminoffline(allinfo, exception)
+      if (poolname, raidinfo[0].split('/')[-1]) in held or offdisks.get(poolname,'_1') == raidinfo[1].split('/')[0]:
+       print('this raid has a disk the admin took offline, it should not be automatically healed ')
+       dels(leaderip, 'ask/'+raidinfo[0])
+       dels(leaderip, raidinfo[0])
+       continue
       dmcmd = 'zpool status '+poolname
       chkstatus = subprocess.run(dmcmd.split(),stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode('utf-8')
       if 'resilvering' in chkstatus:
@@ -550,6 +574,13 @@ def spare2(*args):
       print('rmdisk:',rmdiskname)
       print('raidname:',raidname)
       print('adiskname:',adiskname)
+      other = foreignpool(adiskname, poolname, leaderip)
+      if other:
+         # test 674: the disk holds a label of another pool (exported or owned by a node that is down): never take it
+         print('disk', adiskname, 'belongs to pool', other, ': not a spare for', poolname)
+         dels(leaderip,'ask/needtoreplace',adiskname)
+         dels(leaderip,'needtoreplace',adiskname)
+         continue
       if 'mirror-temp' in raidname:
          cmdline2=['/sbin/zpool', 'attach','-f', poolname, rmdiskname,adiskname]
       elif '_1' in rmdiskname:
@@ -628,6 +659,9 @@ def spare2(*args):
         for disk in allinfo['raids'][raid]['disklist']:
             if disk['changeop'] not in ['free','ONLINE']:
                 print('iamhere',disk['name'])
+                if 'OFF' in disk['status'] and 'dm-' not in disk['name']:
+                    print('the admin took this disk offline, not healing it', disk['name'])
+                    continue
                 excludeddisks = excludeddisks+','+disk['name']
                 if 'dm-' in disk['name']:
                     disk['host'] = myhost
@@ -642,6 +676,7 @@ def spare2(*args):
     if needhost not in actives:
         dels(leaderip, need[0],need[1])
  needtoreplace = str(get(leaderip, 'needtoreplace', '--prefix') )+str(get(leaderip,'offline','--prefix'))
+ held, offdisks = adminoffline(allinfo, exception)
  for diskname in allinfo['disks']:
     disk = allinfo['disks'][diskname]
     if disk['changeop'] in ['free']:
@@ -657,6 +692,20 @@ def spare2(*args):
         faultyreplaceflag = 0
         faultyreplaceflag = solvefaultyreplace(raid)
         if faultyreplaceflag > 0:
+            continue
+        if any('replacing' in str(d['name']) for d in raid['disklist']):
+            print('not optimizing raid:',raid['name'],'a replace is still in progress')
+            continue
+        # test 10 step 6: right after a replace the new disk is listed with changeop 'NA' (not ONLINE) for a while; the window
+        # below takes only ONLINE members, so the optimizer did not see it, found the raid "not optimized" and asked for the
+        # opposite replace -> an endless replace flip-flop between two free disks.  Rebalance only a settled raid: every
+        # present disk ONLINE (missing ones, dm-*, are still replaced as before).
+        unsettled = [ d['name'] for d in raid['disklist'] if 'dm-' not in str(d['name']) and d['changeop'] not in ['ONLINE'] ]
+        if len(unsettled) > 0:
+            print('not optimizing raid:',raid['name'],'disks not settled yet:',unsettled)
+            continue
+        if (raid['pool'], raid['name']) in held:
+            print('not optimizing raid:',raid['name'],'it has a disk the admin took offline')
             continue
         diskwindow = alldisks.copy()
         for disk in raid['disklist']:
@@ -704,8 +753,12 @@ def spare2(*args):
     print('still not all are optimized in this node')
  else:
     print('all is optimized in this node')
-    if len(exception) > 0 :
-        dels(leaderip,'offline','--prefix') 
+    # was dels(leaderip,'offline','--prefix'): that wiped every offlinethis/<pool> key of the admin's offline. Now only the
+    # exact key of a pool that no longer exists goes; the key of a live pool stays until a successful online deletes it
+    stale = [x[0] for x in exception if type(x) is tuple and x[0].startswith('offlinethis/') and x[0].split('/',1)[1] not in allinfo['pools']]
+    for key in stale:
+        dels(leaderip, key)
+    if len(stale) > 0 :
         stampit = str(stamp())
         dosync('sync/offlinethis/add/request','offlinethis_'+stampit)
         

@@ -53,7 +53,8 @@ declare -a iscsitargets=(`docker exec etcdclient /pace/iscsiclients.py $etcdip |
 currentdisks=$(echo "$initialt" | awk '/iscsi/{flag=1} flag; /loopback/{flag=0}')
 #currentdisks=`targetcli ls /iscsi`
 lsblk=$(lsblk -n -o name,serial,vendor)
-disks=(`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 |  grep -v LIO | awk '{print $1}'`)
+# a zvol (zdN, zdNpM) is an iSCSI volume, never a cluster disk: exporting it as zdN-<host> held it open (volume not deletable)
+disks=(`echo "$lsblk" | grep -v $bootdisk | grep -v sr0 |  grep -v LIO | awk '{print $1}' | grep -v 'zd[0-9]'`)
 # container flavour: /root/loopdisks lists the only disks this node may export (the nodes of several clusters share
 # the host's loop devices).  No file = every disk, as before.
 [ -f /TopStor/flavor.sh ] && . /TopStor/flavor.sh

@@ -26,6 +26,9 @@ then
 fi
 echo /TopStor/docker_primary.sh $leader $myhostip $leaderip $clusterip
 /TopStor/docker_primary.sh $leader $myhostip $leaderip $clusterip
+# the API: flask exists now, but nothing ran `docker exec flask /TopStor/fapi.py` on a node that took over (only the node
+# setup starts fapilooper.sh, and only on the first leader): :5001 stayed silent until started by hand (tests 667-677)
+ps -eo args | grep -q '^/usr/bin/sh /pace/fapilooper.sh' || setsid -f nohup /pace/fapilooper.sh >/dev/null 2>&1 </dev/null
 # The monitoring stack (prometheus + grafana are recreated, ~60 s) is started in the background, and only once the API
 # answers (60 s at most): run in line it kept the heartbeat from finishing the take over (hostdown sync, clean up of the
 # lost leader) for a minute, and its disk load made the API start take ~27 s instead of ~1 s.

@@ -11,6 +11,7 @@ from etcddel import etcddel as dels
 #from deltolocal import deltolocal as delstolocal
 from poolall import getall as getall
 from time import sleep
+from diskguard import foreignpool
 from sendhost import sendhost
 from time import time as stamp
 #from syncpools import syncmypools
@@ -556,6 +557,11 @@ def spare2(*args):
    print(rmdisk)
    print('hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh')
    if rmdisk in cpoolinfo:
+       other = foreignpool(adiskname, poolname, leaderip)
+       if other:
+           # test 674: a disk with a label of another pool is never a spare
+           print('disk', adiskname, 'belongs to pool', other, ': not a spare for', poolname)
+           break
        print('will do:', poolname, raidname, rmdisk, adisk)
        if 'mirror-temp' in raidname:
            cmdline2=['/sbin/zpool', 'attach',poolname, rmdisk,adiskname]

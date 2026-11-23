@@ -142,7 +142,12 @@ def featuring(leaderip,excludelst=''):
     needtoreplacelst = get(leaderip,'needto','--prefix')
     needtoreplace = str(needtoreplacelst)
     for disk in disksinfo:
-        if norm(disksinfo[disk]['size']) < norm(disks['disk']) or disksinfo[disk]['changeop'] not in [ 'free', 'ONLINE' ] or ( disksinfo[disk]['changeop'] in 'ONLINE' and disk not in mustinclude) or disk in needtoreplace or disk in excludelst:
+        # test 10 step 6: a disk of this raid named in a needtoreplace value (e.g. 'aab66/a4296d', the replace that just put it
+        # in) was dropped from the candidates, so the optimizer picked another disk of the same host and size and asked for
+        # the opposite replace: an endless zpool replace flip-flop between two free disks.  The pending-replace and exclude
+        # lists only keep FREE disks out; the raid's own ONLINE members always stay candidates.
+        member = disksinfo[disk]['changeop'] in ['ONLINE'] and disk in mustinclude
+        if norm(disksinfo[disk]['size']) < norm(disks['disk']) or disksinfo[disk]['changeop'] not in [ 'free', 'ONLINE' ] or ( disksinfo[disk]['changeop'] in 'ONLINE' and disk not in mustinclude) or (not member and (disk in needtoreplace or disk in excludelst)):
             continue
         else:
             key = f"{disksinfo[disk]['host']}_{disksinfo[disk]['size']}"

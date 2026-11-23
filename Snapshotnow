@@ -25,7 +25,7 @@ echo currentsnaps=$currentsnaps >> $cronout
 oldsnap=`echo $currentsnaps | sort | head -n 1` ;
 echo oldsnap=$oldsnap >> $cronout
 count=0
-countsnap=`echo  "$currentsnaps" | wc -l `;
+countsnap=`echo "$currentsnaps" | grep -c .`;  # empty list = 0 (wc -l counted it as 1)
 echo countsnap=$countsnap >> $cronout 
 countsnap=$(($countsnap+1));
 echo countsnapplus=$countsnap >> $cronout
@@ -33,7 +33,7 @@ keep=$(($keep+0));
 echo keeppluszero=$keep >> $cronout
 timenow=`date`;
 userreq='system';
-if (( $countsnap >  $keep )); then 
+if (( $countsnap >  $keep )) && [ -n "$oldsnap" ]; then 
   /TopStor/logmsg.py Snap1022 info $userreq $hostnam $oldsnap
  /sbin/zfs destroy $oldsnap &>${txtres}$stamp
  if [ $? -ne  0  ]; then
